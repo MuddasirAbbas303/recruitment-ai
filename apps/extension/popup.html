@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recruitment AI</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Recruitment AI</p>
+        <h1>LinkedIn profile importer</h1>
+      </header>
+
+      <p id="status" class="status" role="status">Scanning...</p>
+      <p id="count" class="count" hidden></p>
+      <div id="profiles" class="profiles" aria-live="polite"></div>
+
+      <div id="selection-actions" class="selection-actions" hidden>
+        <button id="select-all" type="button">Select All</button>
+        <button id="clear" type="button" class="secondary">Clear</button>
+      </div>
+
+      <button id="import-selected" type="button" class="primary" disabled>
+        Import Selected
+      </button>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

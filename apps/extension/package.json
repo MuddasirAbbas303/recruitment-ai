@@ -1,0 +1,10 @@
+{
+  "name": "recruitment-ai-extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check popup.js && node --check content.js && node --check background.js",
+    "test": "node --test tests/*.test.js"
+  }
+}

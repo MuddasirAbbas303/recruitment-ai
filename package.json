@@ -1,0 +1,8 @@
+{
+  "name": "recruitment-ai",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --dir apps/web dev",
+    "dev:api": "pnpm --dir apps/api dev"
+  }
+}

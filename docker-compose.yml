@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: recruitment-ai-postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-recruitment_ai}"
+      POSTGRES_USER: "${POSTGRES_USER:-recruitment_user}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-recruitment_password}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "${POSTGRES_USER:-recruitment_user}" -d "${POSTGRES_DB:-recruitment_ai}"
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

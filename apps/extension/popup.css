@@ -1,0 +1,128 @@
+:root {
+  color: #172033;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  background: #f6f8fc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 360px;
+  margin: 0;
+}
+
+main {
+  padding: 20px;
+}
+
+header {
+  margin-bottom: 18px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: #315bd6;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.status,
+.count {
+  margin: 10px 0;
+  font-size: 14px;
+}
+
+.status[data-state="error"] {
+  color: #b42318;
+}
+
+.status[data-state="success"] {
+  color: #067647;
+}
+
+.profiles {
+  display: grid;
+  max-height: 310px;
+  margin: 12px 0;
+  overflow-y: auto;
+  gap: 8px;
+}
+
+.profile {
+  display: flex;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid #d9dfeb;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  gap: 10px;
+}
+
+.profile input {
+  margin-top: 3px;
+}
+
+.profile-details {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.profile-details strong,
+.profile-details span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-details span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.selection-actions {
+  display: flex;
+  margin: 12px 0;
+  gap: 8px;
+}
+
+button {
+  padding: 8px 12px;
+  border: 1px solid #315bd6;
+  border-radius: 7px;
+  color: #315bd6;
+  font: inherit;
+  font-weight: 650;
+  background: #fff;
+  cursor: pointer;
+}
+
+button.primary {
+  width: 100%;
+  color: #fff;
+  background: #315bd6;
+}
+
+button.secondary {
+  border-color: #cbd2df;
+  color: #344054;
+}
+
+button:disabled {
+  border-color: #d0d5dd;
+  color: #98a2b3;
+  background: #eaecf0;
+  cursor: not-allowed;
+}
