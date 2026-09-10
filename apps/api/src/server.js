@@ -264,13 +264,16 @@ app.use(
 )
 app.use(express.json({ limit: '5mb' }))
 
-app.get('/health', (_request, response) => {
+function sendHealthResponse(_request, response) {
   response.json({
     status: 'ok',
     message: 'Recruitment AI API is running',
     database: 'connected',
   })
-})
+}
+
+app.get('/health', sendHealthResponse)
+app.get('/api/health', sendHealthResponse)
 
 function handleCandidateApiError(error, response, fallbackMessage) {
   if (error instanceof CandidateSourceConfigurationError) {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import CandidateDatabase from './components/CandidateDatabase.jsx'
 import SearchCandidates from './components/SearchCandidates.jsx'
+import { apiUrl } from './config/api.js'
 
 const initialJobData = {
   title: '',
@@ -68,7 +69,7 @@ function App() {
   useEffect(() => {
     let isActive = true
 
-    fetch('http://localhost:3000/health')
+    fetch(apiUrl('/api/health'))
       .then((response) => {
         if (!response.ok) {
           throw new Error('API request failed')
@@ -174,13 +175,10 @@ function App() {
     formData.append('location', jobData.location)
 
     try {
-      const response = await fetch(
-        'http://localhost:3000/api/resumes/analyze',
-        {
-          method: 'POST',
-          body: formData,
-        },
-      )
+      const response = await fetch(apiUrl('/api/resumes/analyze'), {
+        method: 'POST',
+        body: formData,
+      })
       const result = await response.json()
 
       if (!response.ok) {

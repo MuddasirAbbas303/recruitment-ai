@@ -5,8 +5,7 @@ import {
 } from '../utils/linkedinSearch.js'
 import CandidateActivityPanel from './CandidateActivityPanel.jsx'
 import InterviewInvitationModal from './InterviewInvitationModal.jsx'
-
-const candidatesApiUrl = 'http://localhost:3000/api/candidates'
+import { candidatesApiUrl } from '../config/api.js'
 const initialSearch = {
   role: '',
   requiredSkills: '',

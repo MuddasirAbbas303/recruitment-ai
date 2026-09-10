@@ -1,3 +1,5 @@
 apps/api/uploads/
 apps/api/.env
+.env
 node_modules
+apps/web/dist/

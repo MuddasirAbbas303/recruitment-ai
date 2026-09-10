@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-
-const candidatesApiUrl = 'http://localhost:3000/api/candidates'
+import { candidatesApiUrl } from '../config/api.js'
 const activityLabels = {
   EMAIL_SENT: 'Email Sent',
   LINKEDIN_MESSAGE_SENT: 'LinkedIn Message Sent',

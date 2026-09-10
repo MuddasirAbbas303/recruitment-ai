@@ -7,16 +7,64 @@ services:
     environment:
       POSTGRES_DB: "${POSTGRES_DB:-recruitment_ai}"
       POSTGRES_USER: "${POSTGRES_USER:-recruitment_user}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-recruitment_password}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U "${POSTGRES_USER:-recruitment_user}" -d "${POSTGRES_DB:-recruitment_ai}"
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
       interval: 5s
       timeout: 5s
       retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: recruitment-ai-api
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: "${POSTGRES_DB:-recruitment_ai}"
+      DB_USER: "${POSTGRES_USER:-recruitment_user}"
+      DB_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      GROQ_MODEL: "${GROQ_MODEL:-openai/gpt-oss-20b}"
+      GROQ_SEARCH_MODEL: "${GROQ_SEARCH_MODEL:-openai/gpt-oss-20b}"
+      GROQ_NORMALIZATION_MODEL: "${GROQ_NORMALIZATION_MODEL:-openai/gpt-oss-20b}"
+      GROQ_WEB_MAX_RESULTS: "${GROQ_WEB_MAX_RESULTS:-10}"
+      USE_MOCK_AI: "${USE_MOCK_AI:-true}"
+      EXTERNAL_CANDIDATE_PROVIDER: "${EXTERNAL_CANDIDATE_PROVIDER:-mock}"
+      CORESIGNAL_API_KEY: "${CORESIGNAL_API_KEY:-}"
+      CHROME_EXTENSION_ORIGIN: "${CHROME_EXTENSION_ORIGIN:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: recruitment-ai-web
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   postgres_data:

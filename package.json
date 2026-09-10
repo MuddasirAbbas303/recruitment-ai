@@ -1,6 +1,7 @@
 {
   "name": "recruitment-ai",
   "private": true,
+  "packageManager": "pnpm@11.21.0",
   "scripts": {
     "dev:web": "pnpm --dir apps/web dev",
     "dev:api": "pnpm --dir apps/api dev"

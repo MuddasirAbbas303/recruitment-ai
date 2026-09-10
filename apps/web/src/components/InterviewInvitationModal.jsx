@@ -1,6 +1,5 @@
 import { useState } from 'react'
-
-const candidatesApiUrl = 'http://localhost:3000/api/candidates'
+import { candidatesApiUrl } from '../config/api.js'
 const durationOptions = [30, 45, 60, 90]
 const meetingTypes = ['Video Call', 'Phone', 'On-site']
 
