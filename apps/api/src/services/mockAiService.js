@@ -219,3 +219,121 @@ export async function analyzeResumeWithMock(job, resumeText) {
     summary: `${candidateName} received a deterministic mock score of ${overallScore}% against the supplied ${job.title} requirements. This is development-only decision support and requires recruiter review.`,
   }
 }
+
+function firstNameFromFullName(fullName) {
+  return fullName.trim().split(/\s+/)[0] || 'there'
+}
+
+function getRelevantOutreachSkills(candidateSkills, job) {
+  const candidateSkillMap = new Map(
+    candidateSkills.map((skill) => [skill.trim().toLowerCase(), skill.trim()]),
+  )
+
+  return unique([...job.requiredSkills, ...job.preferredSkills])
+    .map((skill) => candidateSkillMap.get(skill.trim().toLowerCase()))
+    .filter(Boolean)
+    .slice(0, 2)
+}
+
+export async function generateCandidateOutreachWithMock(candidate, job) {
+  const firstName = firstNameFromFullName(candidate.fullName)
+  const relevantSkills = getRelevantOutreachSkills(candidate.skills, job)
+  const background = candidate.currentTitle
+    ? `your ${candidate.currentTitle} background`
+    : 'your professional background'
+  const companyContext = candidate.currentCompany
+    ? ` at ${candidate.currentCompany}`
+    : ''
+  const skillContext =
+    relevantSkills.length > 0
+      ? ` Your experience with ${relevantSkills.join(' and ')} stood out.`
+      : ''
+  const role = job.role ? `a ${job.role} role` : 'a role on our team'
+  const locationContext = job.location ? ` in ${job.location}` : ''
+
+  return {
+    subject: job.role ? `${job.role} opportunity` : 'Opportunity to connect',
+    body: [
+      `Hi ${firstName},`,
+      '',
+      `I came across ${background}${companyContext}.${skillContext}`,
+      '',
+      `We are currently hiring for ${role}${locationContext}, and your professional experience appears relevant to what the team is looking for.`,
+      '',
+      'Would you be open to a short conversation?',
+      '',
+      'Best,',
+      '[Recruiter]',
+    ].join('\n'),
+  }
+}
+
+export async function generateLinkedInOutreachWithMock(
+  type,
+  candidate,
+  job,
+) {
+  const firstName = firstNameFromFullName(candidate.fullName)
+  const relevantSkills = getRelevantOutreachSkills(candidate.skills, job)
+  const skillContext =
+    relevantSkills.length > 0
+      ? `your ${relevantSkills.join(' and ')} background`
+      : candidate.currentTitle
+        ? `your ${candidate.currentTitle} background`
+        : 'your professional background'
+  const roleContext = job.role ? `the ${job.role} role` : 'a role on our team'
+
+  if (type === 'linkedin-connect') {
+    return {
+      message: `Hi ${firstName}, ${skillContext} caught my attention. We are hiring for ${roleContext}, and I would be happy to connect and share more.`,
+    }
+  }
+
+  const companyContext = candidate.currentCompany
+    ? ` at ${candidate.currentCompany}`
+    : ''
+
+  return {
+    message: [
+      `Hi ${firstName},`,
+      '',
+      `I came across ${skillContext}${companyContext}, and it stood out as relevant to ${roleContext}.`,
+      '',
+      'Would you be open to a short conversation to hear more?',
+    ].join('\n'),
+  }
+}
+
+export async function generateInterviewInvitationWithMock(
+  candidate,
+  interview,
+  job,
+) {
+  const firstName = firstNameFromFullName(candidate.fullName)
+  const roleContext = job?.role ? ` for the ${job.role} role` : ''
+  const locationLine = interview.meetingLocation
+    ? `\n${interview.meetingType}: ${interview.meetingLocation}`
+    : `\nMeeting type: ${interview.meetingType}`
+
+  return {
+    subject: interview.title,
+    body: [
+      `Hi ${firstName},`,
+      '',
+      `We would like to invite you to an interview${roleContext}.`,
+      '',
+      `Date: ${interview.date}`,
+      `Time: ${interview.time} (${interview.timezone})`,
+      `Duration: ${interview.durationMinutes} minutes`,
+      locationLine.trimStart(),
+      interview.notes ? `Additional notes: ${interview.notes}` : null,
+      '',
+      'Please let us know whether this time works for you.',
+      '',
+      'Best,',
+      '[Recruiter]',
+    ]
+      .filter((line) => line !== null)
+      .join('\n'),
+  }
+}

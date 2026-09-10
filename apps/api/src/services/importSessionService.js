@@ -83,6 +83,33 @@ export function getImportSession(sessionId, now = Date.now()) {
   }
 }
 
+export function updateImportSession(
+  sessionId,
+  { criteria, candidates },
+  now = Date.now(),
+) {
+  cleanupExpiredImportSessions(now)
+  const session = importSessions.get(sessionId)
+
+  if (!session) {
+    throw new ImportSessionNotFoundError()
+  }
+
+  if (
+    !Array.isArray(candidates) ||
+    candidates.length === 0 ||
+    candidates.length > MAX_IMPORT_SESSION_CANDIDATES
+  ) {
+    throw new RangeError(
+      `Import sessions require 1-${MAX_IMPORT_SESSION_CANDIDATES} candidates.`,
+    )
+  }
+
+  session.criteria = clone(criteria)
+  session.candidates = clone(candidates)
+  return getImportSession(sessionId, now)
+}
+
 const cleanupTimer = setInterval(
   cleanupExpiredImportSessions,
   CLEANUP_INTERVAL_MS,

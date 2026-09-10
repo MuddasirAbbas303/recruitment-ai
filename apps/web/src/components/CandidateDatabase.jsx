@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import CandidateActivityPanel from './CandidateActivityPanel.jsx'
+import InterviewInvitationModal from './InterviewInvitationModal.jsx'
 
 const candidatesApiUrl = 'http://localhost:3000/api/candidates'
 const candidateStatuses = [
@@ -46,6 +48,8 @@ function CandidateDatabase() {
   const [notesDraft, setNotesDraft] = useState('')
   const [updatingCandidateId, setUpdatingCandidateId] = useState(null)
   const [updateError, setUpdateError] = useState(null)
+  const [activityCandidate, setActivityCandidate] = useState(null)
+  const [interviewCandidate, setInterviewCandidate] = useState(null)
 
   const loadCandidates = useCallback(async (candidateFilters = {}, signal) => {
     setLoadStatus('loading')
@@ -498,6 +502,24 @@ function CandidateDatabase() {
                         >
                           Connect
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setActivityCandidate(candidate)}
+                        >
+                          Activity
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!candidate.email}
+                          title={
+                            candidate.email
+                              ? undefined
+                              : 'Candidate email is required'
+                          }
+                          onClick={() => setInterviewCandidate(candidate)}
+                        >
+                          Invite to Interview
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -506,6 +528,30 @@ function CandidateDatabase() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {activityCandidate && (
+        <CandidateActivityPanel
+          candidate={activityCandidate}
+          onClose={() => setActivityCandidate(null)}
+        />
+      )}
+
+      {interviewCandidate && (
+        <InterviewInvitationModal
+          candidate={interviewCandidate}
+          onCandidateUpdated={(savedCandidate) => {
+            setCandidates((currentCandidates) =>
+              currentCandidates.map((candidate) =>
+                candidate.id === savedCandidate.id
+                  ? savedCandidate
+                  : candidate,
+              ),
+            )
+            setInterviewCandidate(savedCandidate)
+          }}
+          onClose={() => setInterviewCandidate(null)}
+        />
       )}
     </section>
   )

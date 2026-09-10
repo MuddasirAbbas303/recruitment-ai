@@ -3,6 +3,8 @@ import {
   buildGoogleSearchUrl,
   buildLinkedInXrayQuery,
 } from '../utils/linkedinSearch.js'
+import CandidateActivityPanel from './CandidateActivityPanel.jsx'
+import InterviewInvitationModal from './InterviewInvitationModal.jsx'
 
 const candidatesApiUrl = 'http://localhost:3000/api/candidates'
 const initialSearch = {
@@ -17,6 +19,7 @@ const initialSearch = {
   source: 'both',
 }
 const visibleSkillCount = 4
+const linkedinConnectionMaxLength = 250
 
 function parseList(value) {
   return [
@@ -89,6 +92,56 @@ function sortCandidateResults(candidates) {
   })
 }
 
+function toExportCandidate(candidate) {
+  const analysis = candidate.matchAnalysis
+
+  return {
+    fullName: candidate.fullName,
+    currentTitle: candidate.currentTitle ?? null,
+    currentCompany: candidate.currentCompany ?? null,
+    location: candidate.location ?? null,
+    yearsOfExperience: candidate.yearsOfExperience ?? null,
+    skills: candidate.skills ?? [],
+    matchScore: Number.isFinite(candidate.matchScore)
+      ? candidate.matchScore
+      : null,
+    matchAnalysis: analysis
+      ? {
+          requiredSkillsScore: analysis.requiredSkillsScore ?? null,
+          preferredSkillsScore: analysis.preferredSkillsScore ?? null,
+          experienceScore: analysis.experienceScore ?? null,
+          roleScore: analysis.roleScore ?? null,
+          matchedSkills: analysis.matchedSkills ?? [],
+          missingSkills: analysis.missingSkills ?? [],
+          strengths: analysis.strengths ?? [],
+          concerns: analysis.concerns ?? [],
+          summary: analysis.summary ?? null,
+        }
+      : null,
+    linkedinUrl: candidate.linkedinUrl ?? null,
+    email: candidate.email ?? null,
+    githubUrl: candidate.githubUrl ?? null,
+    portfolioUrl: candidate.portfolioUrl ?? null,
+    source: candidate.source ?? null,
+    isSaved: Boolean(candidate.isSaved),
+    status: candidate.status ?? null,
+    notes: candidate.notes ?? null,
+  }
+}
+
+function getExportFilename(contentDisposition) {
+  const filenameMatch = contentDisposition?.match(
+    /filename=(?:"([^"]+)"|([^;]+))/i,
+  )
+  const filename = filenameMatch?.[1] ?? filenameMatch?.[2]
+
+  return filename?.trim() || 'recruitment-candidates.xlsx'
+}
+
+function buildMailtoUrl(email, subject, body) {
+  return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
+
 function SearchCandidates() {
   const [search, setSearch] = useState(initialSearch)
   const [searchStatus, setSearchStatus] = useState('idle')
@@ -102,6 +155,25 @@ function SearchCandidates() {
   const [externalSearchOpened, setExternalSearchOpened] = useState(false)
   const [importBannerCount, setImportBannerCount] = useState(null)
   const [importError, setImportError] = useState(null)
+  const [activeImportSessionId, setActiveImportSessionId] = useState(null)
+  const [enrichingCandidateIds, setEnrichingCandidateIds] = useState([])
+  const [isBulkEnriching, setIsBulkEnriching] = useState(false)
+  const [enrichmentProgress, setEnrichmentProgress] = useState(null)
+  const [exportingTarget, setExportingTarget] = useState(null)
+  const [outreachCandidate, setOutreachCandidate] = useState(null)
+  const [outreachSubject, setOutreachSubject] = useState('')
+  const [outreachBody, setOutreachBody] = useState('')
+  const [outreachStatus, setOutreachStatus] = useState('idle')
+  const [emailSentStatus, setEmailSentStatus] = useState('idle')
+  const [linkedinOutreachCandidate, setLinkedinOutreachCandidate] =
+    useState(null)
+  const [linkedinOutreachType, setLinkedinOutreachType] = useState(null)
+  const [linkedinMessage, setLinkedinMessage] = useState('')
+  const [linkedinOutreachStatus, setLinkedinOutreachStatus] = useState('idle')
+  const [linkedinCopyStatus, setLinkedinCopyStatus] = useState('idle')
+  const [linkedinSentStatus, setLinkedinSentStatus] = useState('idle')
+  const [activityCandidate, setActivityCandidate] = useState(null)
+  const [interviewCandidate, setInterviewCandidate] = useState(null)
 
   useEffect(() => {
     const currentUrl = new URL(window.location.href)
@@ -137,6 +209,7 @@ function SearchCandidates() {
         setActionMessage(null)
         setExternalSearchOpened(false)
         setImportBannerCount(importedResults.length)
+        setActiveImportSessionId(importSessionId)
         setSearchStatus('success')
 
         currentUrl.searchParams.delete('importSession')
@@ -173,6 +246,20 @@ function SearchCandidates() {
       !candidate.isSaved && selectedCandidateIds.includes(candidate.id),
   )
   const unsavedCandidates = results.filter((candidate) => !candidate.isSaved)
+  const selectedCandidates = results.filter((candidate) =>
+    selectedCandidateIds.includes(candidate.id),
+  )
+  const selectedImportedCandidates = results.filter(
+    (candidate) =>
+      !candidate.isSaved &&
+      candidate.source === 'google-linkedin' &&
+      selectedCandidateIds.includes(candidate.id),
+  )
+  const isLinkedinConnectionRequest =
+    linkedinOutreachType === 'linkedin-connect'
+  const isLinkedinMessageTooLong =
+    isLinkedinConnectionRequest &&
+    linkedinMessage.length > linkedinConnectionMaxLength
 
   function handleSearchChange(event) {
     const { name, value } = event.target
@@ -231,6 +318,8 @@ function SearchCandidates() {
     setExternalSearchOpened(shouldOpenGoogle)
     setImportBannerCount(null)
     setImportError(null)
+    setActiveImportSessionId(null)
+    setEnrichmentProgress(null)
 
     if (shouldOpenGoogle) {
       openGoogleSearch(payload)
@@ -402,6 +491,375 @@ function SearchCandidates() {
           ? `${savedCount} ${savedCount === 1 ? 'candidate' : 'candidates'} saved successfully.`
           : `${savedCount} of ${candidates.length} candidates saved.`,
     })
+  }
+
+  async function enrichCandidate(candidate, showMessage = true) {
+    setEnrichingCandidateIds((currentIds) => [
+      ...currentIds,
+      candidate.id,
+    ])
+
+    if (showMessage) {
+      setActionMessage(null)
+    }
+
+    try {
+      const response = await fetch(`${candidatesApiUrl}/enrich-public`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidate: {
+            id: candidate.id,
+            fullName: candidate.fullName,
+            linkedinUrl: candidate.linkedinUrl,
+            currentTitle: candidate.currentTitle,
+            currentCompany: candidate.currentCompany,
+            location: candidate.location,
+            searchSnippet: candidate.searchSnippet,
+          },
+          ...(activeImportSessionId && {
+            importSessionId: activeImportSessionId,
+          }),
+        }),
+      })
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to enrich candidate.')
+      }
+
+      setResults((currentResults) =>
+        sortCandidateResults(
+          currentResults.map((currentCandidate) =>
+            currentCandidate.id === candidate.id
+              ? {
+                  ...currentCandidate,
+                  ...result.candidate,
+                  enrichment: result.enrichment,
+                  source: currentCandidate.source,
+                  isSaved: currentCandidate.isSaved,
+                  notes: currentCandidate.notes,
+                }
+              : currentCandidate,
+          ),
+        ),
+      )
+
+      if (showMessage) {
+        setActionMessage({
+          type: 'success',
+          text: `${candidate.fullName} enriched from public professional sources.`,
+        })
+      }
+
+      return true
+    } catch (error) {
+      if (showMessage) {
+        setActionMessage({
+          type: 'error',
+          text: error.message || `Unable to enrich ${candidate.fullName}.`,
+        })
+      }
+
+      return false
+    } finally {
+      setEnrichingCandidateIds((currentIds) =>
+        currentIds.filter((candidateId) => candidateId !== candidate.id),
+      )
+    }
+  }
+
+  async function enrichCandidates(candidates) {
+    const candidatesToEnrich = candidates.slice(0, 5)
+
+    if (candidatesToEnrich.length === 0) {
+      return
+    }
+
+    setIsBulkEnriching(true)
+    setActionMessage(null)
+    let enrichedCount = 0
+
+    for (const [index, candidate] of candidatesToEnrich.entries()) {
+      setEnrichmentProgress({
+        current: index + 1,
+        total: candidatesToEnrich.length,
+      })
+
+      if (await enrichCandidate(candidate, false)) {
+        enrichedCount += 1
+      }
+    }
+
+    setIsBulkEnriching(false)
+    setEnrichmentProgress(null)
+    setActionMessage({
+      type:
+        enrichedCount === candidatesToEnrich.length ? 'success' : 'error',
+      text:
+        enrichedCount === candidatesToEnrich.length
+          ? `${enrichedCount} ${enrichedCount === 1 ? 'candidate' : 'candidates'} enriched successfully.`
+          : `${enrichedCount} of ${candidatesToEnrich.length} candidates enriched.`,
+    })
+  }
+
+  async function exportCandidates(candidates, target) {
+    if (candidates.length === 0) {
+      return
+    }
+
+    setExportingTarget(target)
+    setActionMessage(null)
+
+    try {
+      const response = await fetch(`${candidatesApiUrl}/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidates: candidates.map(toExportCandidate),
+        }),
+      })
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}))
+        throw new Error(result.error || 'Unable to export candidates.')
+      }
+
+      const workbook = await response.blob()
+      const downloadUrl = URL.createObjectURL(workbook)
+      const downloadLink = document.createElement('a')
+      downloadLink.href = downloadUrl
+      downloadLink.download = getExportFilename(
+        response.headers.get('Content-Disposition'),
+      )
+      document.body.append(downloadLink)
+      downloadLink.click()
+      downloadLink.remove()
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0)
+
+      setActionMessage({
+        type: 'success',
+        text: `${candidates.length} ${candidates.length === 1 ? 'candidate' : 'candidates'} exported successfully.`,
+      })
+    } catch (error) {
+      setActionMessage({
+        type: 'error',
+        text: error.message || 'Unable to export candidates.',
+      })
+    } finally {
+      setExportingTarget(null)
+    }
+  }
+
+  function openOutreach(candidate) {
+    setLinkedinOutreachCandidate(null)
+    setOutreachCandidate(candidate)
+    setOutreachSubject('')
+    setOutreachBody('')
+    setOutreachStatus('idle')
+    setEmailSentStatus('idle')
+  }
+
+  function closeOutreach() {
+    setOutreachCandidate(null)
+    setOutreachSubject('')
+    setOutreachBody('')
+    setOutreachStatus('idle')
+    setEmailSentStatus('idle')
+  }
+
+  async function generateOutreach() {
+    if (!outreachCandidate?.email) {
+      return
+    }
+
+    setOutreachStatus('generating')
+
+    try {
+      const response = await fetch(`${candidatesApiUrl}/generate-outreach`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidate: {
+            fullName: outreachCandidate.fullName,
+            currentTitle: outreachCandidate.currentTitle,
+            currentCompany: outreachCandidate.currentCompany,
+            location: outreachCandidate.location,
+            email: outreachCandidate.email,
+            skills: outreachCandidate.skills ?? [],
+            summary: outreachCandidate.summary,
+            matchScore: Number.isFinite(outreachCandidate.matchScore)
+              ? outreachCandidate.matchScore
+              : null,
+            matchAnalysis: outreachCandidate.matchAnalysis ?? null,
+          },
+          job: {
+            role: search.role.trim(),
+            requiredSkills: parseList(search.requiredSkills),
+            preferredSkills: parseList(search.preferredSkills),
+            location: search.location.trim(),
+            description: '',
+          },
+        }),
+      })
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to generate outreach.')
+      }
+
+      setOutreachSubject(result.subject)
+      setOutreachBody(result.body)
+      setOutreachStatus('success')
+    } catch {
+      setOutreachStatus('error')
+    }
+  }
+
+  function openLinkedInOutreach(candidate, type) {
+    setOutreachCandidate(null)
+    setLinkedinOutreachCandidate(candidate)
+    setLinkedinOutreachType(type)
+    setLinkedinMessage('')
+    setLinkedinOutreachStatus('idle')
+    setLinkedinCopyStatus('idle')
+    setLinkedinSentStatus('idle')
+  }
+
+  function closeLinkedInOutreach() {
+    setLinkedinOutreachCandidate(null)
+    setLinkedinOutreachType(null)
+    setLinkedinMessage('')
+    setLinkedinOutreachStatus('idle')
+    setLinkedinCopyStatus('idle')
+    setLinkedinSentStatus('idle')
+  }
+
+  async function generateLinkedInOutreach() {
+    if (!linkedinOutreachCandidate?.linkedinUrl || !linkedinOutreachType) {
+      return
+    }
+
+    setLinkedinOutreachStatus('generating')
+    setLinkedinCopyStatus('idle')
+
+    try {
+      const response = await fetch(
+        `${candidatesApiUrl}/generate-linkedin-outreach`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: linkedinOutreachType,
+            candidate: {
+              fullName: linkedinOutreachCandidate.fullName,
+              currentTitle: linkedinOutreachCandidate.currentTitle,
+              currentCompany: linkedinOutreachCandidate.currentCompany,
+              location: linkedinOutreachCandidate.location,
+              linkedinUrl: linkedinOutreachCandidate.linkedinUrl,
+              skills: linkedinOutreachCandidate.skills ?? [],
+              summary: linkedinOutreachCandidate.summary,
+              matchAnalysis:
+                linkedinOutreachCandidate.matchAnalysis ?? null,
+            },
+            job: {
+              role: search.role.trim(),
+              requiredSkills: parseList(search.requiredSkills),
+              preferredSkills: parseList(search.preferredSkills),
+              location: search.location.trim(),
+              description: '',
+            },
+          }),
+        },
+      )
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || 'Unable to generate LinkedIn outreach.',
+        )
+      }
+
+      setLinkedinMessage(result.message)
+      setLinkedinOutreachStatus('success')
+    } catch {
+      setLinkedinOutreachStatus('error')
+    }
+  }
+
+  async function copyLinkedInMessage() {
+    try {
+      await navigator.clipboard.writeText(linkedinMessage)
+      setLinkedinCopyStatus('copied')
+      window.setTimeout(() => setLinkedinCopyStatus('idle'), 1_500)
+    } catch {
+      setLinkedinCopyStatus('error')
+    }
+  }
+
+  function applyPersistentCandidateUpdate(candidateId, savedCandidate) {
+    setResults((currentResults) =>
+      currentResults.map((candidate) =>
+        candidate.id === candidateId
+          ? {
+              ...candidate,
+              ...savedCandidate,
+              source: candidate.source,
+              isSaved: true,
+            }
+          : candidate,
+      ),
+    )
+  }
+
+  async function markOutreachAsSent({
+    candidate,
+    type,
+    channel,
+    message,
+    setStatus,
+  }) {
+    if (!candidate?.isSaved) {
+      return
+    }
+
+    setStatus('saving')
+
+    try {
+      const response = await fetch(
+        `${candidatesApiUrl}/${candidate.id}/activities`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type,
+            channel,
+            message: message.trim() || null,
+            metadata: {},
+          }),
+        },
+      )
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to record activity.')
+      }
+
+      applyPersistentCandidateUpdate(candidate.id, result.candidate)
+      setOutreachCandidate((currentCandidate) =>
+        currentCandidate?.id === candidate.id
+          ? { ...currentCandidate, ...result.candidate, isSaved: true }
+          : currentCandidate,
+      )
+      setLinkedinOutreachCandidate((currentCandidate) =>
+        currentCandidate?.id === candidate.id
+          ? { ...currentCandidate, ...result.candidate, isSaved: true }
+          : currentCandidate,
+      )
+      setStatus('success')
+    } catch {
+      setStatus('error')
+    }
   }
 
   function toggleCandidateSelection(candidateId) {
@@ -626,9 +1084,23 @@ function SearchCandidates() {
             <div className="bulk-save-actions">
               <button
                 type="button"
+                title="Enrich up to 5 selected imported candidates"
+                onClick={() => enrichCandidates(selectedImportedCandidates)}
+                disabled={
+                  selectedImportedCandidates.length === 0 ||
+                  isBulkEnriching ||
+                  isBulkSaving
+                }
+              >
+                Enrich Selected
+              </button>
+              <button
+                type="button"
                 onClick={() => saveCandidates(selectedUnsavedCandidates)}
                 disabled={
-                  selectedUnsavedCandidates.length === 0 || isBulkSaving
+                  selectedUnsavedCandidates.length === 0 ||
+                  isBulkSaving ||
+                  isBulkEnriching
                 }
               >
                 Save Selected
@@ -636,12 +1108,53 @@ function SearchCandidates() {
               <button
                 type="button"
                 onClick={() => saveCandidates(unsavedCandidates)}
-                disabled={unsavedCandidates.length === 0 || isBulkSaving}
+                disabled={
+                  unsavedCandidates.length === 0 ||
+                  isBulkSaving ||
+                  isBulkEnriching
+                }
               >
                 Save All
               </button>
+              <button
+                type="button"
+                onClick={() =>
+                  exportCandidates(selectedCandidates, 'selected')
+                }
+                disabled={
+                  selectedCandidates.length === 0 ||
+                  exportingTarget !== null ||
+                  isBulkSaving ||
+                  isBulkEnriching
+                }
+              >
+                {exportingTarget === 'selected'
+                  ? 'Exporting...'
+                  : 'Export Selected'}
+              </button>
+              <button
+                type="button"
+                onClick={() => exportCandidates(results, 'results')}
+                disabled={
+                  results.length === 0 ||
+                  exportingTarget !== null ||
+                  isBulkSaving ||
+                  isBulkEnriching
+                }
+              >
+                {exportingTarget === 'results'
+                  ? 'Exporting...'
+                  : 'Export Results'}
+              </button>
             </div>
           </div>
+
+          {enrichmentProgress && (
+            <p className="enrichment-progress" role="status">
+              Enriching {enrichmentProgress.current} of{' '}
+              {enrichmentProgress.total}...
+            </p>
+          )}
 
           {actionMessage && (
             <p
@@ -682,6 +1195,13 @@ function SearchCandidates() {
                   const isSavingNotes = savingNotesIds.includes(candidate.id)
                   const isAnalysisExpanded =
                     expandedAnalysisId === candidate.id
+                  const isEnriching = enrichingCandidateIds.includes(
+                    candidate.id,
+                  )
+                  const canEnrich =
+                    !candidate.isSaved &&
+                    candidate.source === 'google-linkedin' &&
+                    Boolean(candidate.linkedinUrl)
 
                   return (
                     <Fragment key={candidate.id}>
@@ -693,14 +1213,20 @@ function SearchCandidates() {
                             checked={selectedCandidateIds.includes(
                               candidate.id,
                             )}
-                            disabled={candidate.isSaved || isBulkSaving}
+                            disabled={
+                              isBulkSaving ||
+                              isBulkEnriching
+                            }
                             onChange={() =>
                               toggleCandidateSelection(candidate.id)
                             }
                           />
                         </td>
                         <td className="candidate-name-cell">
-                          {candidate.fullName}
+                          <strong>{candidate.fullName}</strong>
+                          {candidate.enrichment?.enriched && (
+                            <span className="enriched-badge">Enriched</span>
+                          )}
                         </td>
                         <td>{candidate.currentTitle || '-'}</td>
                         <td>{candidate.currentCompany || '-'}</td>
@@ -801,32 +1327,85 @@ function SearchCandidates() {
                                 View Profile
                               </button>
                             )}
-                            {candidate.email ? (
-                              <a href={`mailto:${candidate.email}`}>Email</a>
-                            ) : (
-                              <button type="button" disabled>
-                                Email
-                              </button>
-                            )}
                             <button
                               type="button"
-                              disabled
-                              title="LinkedIn integration coming later"
+                              disabled={!candidate.email}
+                              onClick={() => openOutreach(candidate)}
+                            >
+                              Email
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!candidate.linkedinUrl}
+                              onClick={() =>
+                                openLinkedInOutreach(
+                                  candidate,
+                                  'linkedin-message',
+                                )
+                              }
                             >
                               LinkedIn Message
                             </button>
                             <button
                               type="button"
-                              disabled
-                              title="LinkedIn integration coming later"
+                              disabled={!candidate.linkedinUrl}
+                              onClick={() =>
+                                openLinkedInOutreach(
+                                  candidate,
+                                  'linkedin-connect',
+                                )
+                              }
                             >
                               Connect
                             </button>
+                            {candidate.isSaved && (
+                              <button
+                                type="button"
+                                onClick={() => setActivityCandidate(candidate)}
+                              >
+                                Activity
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="interview-invite-button"
+                              title={
+                                !candidate.isSaved
+                                  ? 'Save the candidate before inviting them'
+                                  : !candidate.email
+                                    ? 'Candidate email is required'
+                                    : undefined
+                              }
+                              disabled={
+                                !candidate.isSaved || !candidate.email
+                              }
+                              onClick={() => setInterviewCandidate(candidate)}
+                            >
+                              Invite to Interview
+                            </button>
+                            {canEnrich && (
+                              <button
+                                type="button"
+                                className="enrich-candidate-button"
+                                disabled={
+                                  isEnriching ||
+                                  isBulkEnriching ||
+                                  isBulkSaving
+                                }
+                                onClick={() => enrichCandidate(candidate)}
+                              >
+                                {isEnriching ? 'Enriching...' : 'Enrich'}
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="save-candidate-button"
                               disabled={
-                                candidate.isSaved || isSaving || isBulkSaving
+                                candidate.isSaved ||
+                                isSaving ||
+                                isBulkSaving ||
+                                isBulkEnriching ||
+                                isEnriching
                               }
                               onClick={() => saveCandidate(candidate)}
                             >
@@ -925,6 +1504,331 @@ function SearchCandidates() {
             </table>
           </div>
         </section>
+      )}
+
+      {outreachCandidate && (
+        <div className="outreach-backdrop">
+          <section
+            className="outreach-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="outreach-title"
+          >
+            <div className="outreach-heading">
+              <div>
+                <h3 id="outreach-title">Candidate Outreach</h3>
+                <p>
+                  Review and edit the message before opening your email app.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="outreach-close"
+                aria-label="Close outreach panel"
+                onClick={closeOutreach}
+              >
+                ×
+              </button>
+            </div>
+
+            <dl className="outreach-recipient">
+              <div>
+                <dt>Candidate</dt>
+                <dd>{outreachCandidate.fullName}</dd>
+              </div>
+              <div>
+                <dt>Email</dt>
+                <dd>{outreachCandidate.email}</dd>
+              </div>
+            </dl>
+
+            <label className="outreach-field">
+              Subject
+              <input
+                type="text"
+                value={outreachSubject}
+                onChange={(event) => setOutreachSubject(event.target.value)}
+              />
+            </label>
+
+            <label className="outreach-field">
+              Message
+              <textarea
+                rows="12"
+                value={outreachBody}
+                onChange={(event) => setOutreachBody(event.target.value)}
+              />
+            </label>
+
+            {outreachStatus === 'success' && (
+              <p className="outreach-message success" role="status">
+                Outreach generated.
+              </p>
+            )}
+            {outreachStatus === 'error' && (
+              <p className="outreach-message error" role="alert">
+                Unable to generate outreach.
+              </p>
+            )}
+            {emailSentStatus === 'success' && (
+              <p className="outreach-message success" role="status">
+                Email marked as sent.
+              </p>
+            )}
+            {emailSentStatus === 'error' && (
+              <p className="outreach-message error" role="alert">
+                Unable to record email activity.
+              </p>
+            )}
+
+            <div className="outreach-actions">
+              <button
+                type="button"
+                className="outreach-generate"
+                disabled={outreachStatus === 'generating'}
+                onClick={generateOutreach}
+              >
+                {outreachStatus === 'generating'
+                  ? 'Generating...'
+                  : 'Generate with AI'}
+              </button>
+              <a
+                href={buildMailtoUrl(
+                  outreachCandidate.email,
+                  outreachSubject,
+                  outreachBody,
+                )}
+              >
+                Open in Email App
+              </a>
+              <button
+                type="button"
+                title={
+                  outreachCandidate.isSaved
+                    ? undefined
+                    : 'Save the candidate before recording activity'
+                }
+                disabled={
+                  !outreachCandidate.isSaved || emailSentStatus === 'saving'
+                }
+                onClick={() =>
+                  markOutreachAsSent({
+                    candidate: outreachCandidate,
+                    type: 'EMAIL_SENT',
+                    channel: 'email',
+                    message: outreachBody,
+                    setStatus: setEmailSentStatus,
+                  })
+                }
+              >
+                {emailSentStatus === 'saving'
+                  ? 'Marking...'
+                  : 'Mark as Sent'}
+              </button>
+              <button type="button" onClick={closeOutreach}>
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {linkedinOutreachCandidate && (
+        <div className="outreach-backdrop">
+          <section
+            className="outreach-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="linkedin-outreach-title"
+          >
+            <div className="outreach-heading">
+              <div>
+                <h3 id="linkedin-outreach-title">
+                  {isLinkedinConnectionRequest
+                    ? 'Connection Request'
+                    : 'LinkedIn Message'}
+                </h3>
+                <p>
+                  Review and edit the draft, then paste it manually on
+                  LinkedIn.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="outreach-close"
+                aria-label="Close LinkedIn outreach panel"
+                onClick={closeLinkedInOutreach}
+              >
+                ×
+              </button>
+            </div>
+
+            <dl className="outreach-recipient linkedin-recipient">
+              <div>
+                <dt>Candidate</dt>
+                <dd>{linkedinOutreachCandidate.fullName}</dd>
+              </div>
+            </dl>
+
+            <label className="outreach-field">
+              Message
+              <textarea
+                rows={isLinkedinConnectionRequest ? 6 : 12}
+                value={linkedinMessage}
+                onChange={(event) => {
+                  setLinkedinMessage(event.target.value)
+                  setLinkedinCopyStatus('idle')
+                }}
+              />
+            </label>
+
+            {isLinkedinConnectionRequest && (
+              <p
+                className={`outreach-character-count ${
+                  isLinkedinMessageTooLong ? 'invalid' : ''
+                }`}
+              >
+                Character count: {linkedinMessage.length} /{' '}
+                {linkedinConnectionMaxLength}
+              </p>
+            )}
+
+            {isLinkedinMessageTooLong && (
+              <p className="outreach-message error" role="alert">
+                Connection request notes must be 250 characters or fewer.
+              </p>
+            )}
+            {linkedinOutreachStatus === 'success' && (
+              <p className="outreach-message success" role="status">
+                Message generated.
+              </p>
+            )}
+            {linkedinOutreachStatus === 'error' && (
+              <p className="outreach-message error" role="alert">
+                Unable to generate LinkedIn outreach.
+              </p>
+            )}
+            {linkedinCopyStatus === 'copied' && (
+              <p className="outreach-copy-feedback" role="status">
+                Copied
+              </p>
+            )}
+            {linkedinCopyStatus === 'error' && (
+              <p className="outreach-message error" role="alert">
+                Unable to copy message.
+              </p>
+            )}
+            {linkedinSentStatus === 'success' && (
+              <p className="outreach-message success" role="status">
+                LinkedIn outreach marked as sent.
+              </p>
+            )}
+            {linkedinSentStatus === 'error' && (
+              <p className="outreach-message error" role="alert">
+                Unable to record LinkedIn activity.
+              </p>
+            )}
+
+            <div className="outreach-actions">
+              <button
+                type="button"
+                className="outreach-generate"
+                disabled={linkedinOutreachStatus === 'generating'}
+                onClick={generateLinkedInOutreach}
+              >
+                {linkedinOutreachStatus === 'generating'
+                  ? 'Generating...'
+                  : 'Generate with AI'}
+              </button>
+              {isLinkedinMessageTooLong ? (
+                <button type="button" disabled>
+                  Open LinkedIn Profile
+                </button>
+              ) : (
+                <a
+                  href={linkedinOutreachCandidate.linkedinUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open LinkedIn Profile
+                </a>
+              )}
+              <button
+                type="button"
+                disabled={
+                  !linkedinMessage.trim() || isLinkedinMessageTooLong
+                }
+                onClick={copyLinkedInMessage}
+              >
+                Copy Message
+              </button>
+              <button
+                type="button"
+                title={
+                  linkedinOutreachCandidate.isSaved
+                    ? undefined
+                    : 'Save the candidate before recording activity'
+                }
+                disabled={
+                  !linkedinOutreachCandidate.isSaved ||
+                  !linkedinMessage.trim() ||
+                  isLinkedinMessageTooLong ||
+                  linkedinSentStatus === 'saving'
+                }
+                onClick={() =>
+                  markOutreachAsSent({
+                    candidate: linkedinOutreachCandidate,
+                    type: isLinkedinConnectionRequest
+                      ? 'LINKEDIN_CONNECT_SENT'
+                      : 'LINKEDIN_MESSAGE_SENT',
+                    channel: 'linkedin',
+                    message: linkedinMessage,
+                    setStatus: setLinkedinSentStatus,
+                  })
+                }
+              >
+                {linkedinSentStatus === 'saving'
+                  ? 'Marking...'
+                  : 'Mark as Sent'}
+              </button>
+              <button type="button" onClick={closeLinkedInOutreach}>
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {activityCandidate && (
+        <CandidateActivityPanel
+          candidate={activityCandidate}
+          onClose={() => setActivityCandidate(null)}
+        />
+      )}
+
+      {interviewCandidate && (
+        <InterviewInvitationModal
+          candidate={interviewCandidate}
+          job={{
+            role: search.role.trim(),
+            requiredSkills: parseList(search.requiredSkills),
+            preferredSkills: parseList(search.preferredSkills),
+            location: search.location.trim(),
+            description: '',
+          }}
+          onCandidateUpdated={(savedCandidate) => {
+            applyPersistentCandidateUpdate(
+              interviewCandidate.id,
+              savedCandidate,
+            )
+            setInterviewCandidate((currentCandidate) => ({
+              ...currentCandidate,
+              ...savedCandidate,
+              isSaved: true,
+            }))
+          }}
+          onClose={() => setInterviewCandidate(null)}
+        />
       )}
     </section>
   )

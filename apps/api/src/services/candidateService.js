@@ -6,6 +6,7 @@ import {
 import { z } from 'zod'
 import database from '../config/database.js'
 import Candidate from '../models/Candidate.js'
+import CandidateActivity from '../models/CandidateActivity.js'
 
 const optionalString = z
   .union([z.string().trim().max(255), z.null()])
@@ -486,7 +487,12 @@ export async function getCandidateById(id) {
 }
 
 export async function updateCandidate(id, input) {
-  const candidate = await getCandidateById(id)
+  const idValidation = z.string().uuid().safeParse(id)
+
+  if (!idValidation.success) {
+    throw new CandidateValidationError('Invalid candidate ID.')
+  }
+
   const validation = candidateUpdateSchema.safeParse(input)
 
   if (!validation.success) {
@@ -499,6 +505,38 @@ export async function updateCandidate(id, input) {
     )
   }
 
-  await candidate.update(validation.data)
-  return candidate
+  return database.transaction(async (transaction) => {
+    const candidate = await Candidate.findByPk(idValidation.data, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    })
+
+    if (!candidate) {
+      throw new CandidateNotFoundError('Candidate not found.')
+    }
+
+    const previousStatus = candidate.status
+    await candidate.update(validation.data, { transaction })
+
+    if (
+      validation.data.status !== undefined &&
+      validation.data.status !== previousStatus
+    ) {
+      await CandidateActivity.create(
+        {
+          candidateId: candidate.id,
+          type: 'STATUS_CHANGED',
+          channel: 'manual',
+          message: null,
+          metadata: {
+            from: previousStatus,
+            to: validation.data.status,
+          },
+        },
+        { transaction },
+      )
+    }
+
+    return candidate
+  })
 }

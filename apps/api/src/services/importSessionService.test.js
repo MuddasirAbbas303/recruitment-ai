@@ -6,6 +6,7 @@ import {
   IMPORT_SESSION_TTL_MS,
   ImportSessionNotFoundError,
   MAX_IMPORT_SESSION_CANDIDATES,
+  updateImportSession,
 } from './importSessionService.js'
 
 test('stores isolated candidate data and expires after thirty minutes', () => {
@@ -38,5 +39,31 @@ test('rejects sessions above the candidate limit', () => {
         ),
       }),
     RangeError,
+  )
+})
+
+test('updates session candidates without extending expiry', () => {
+  const createdAt = Date.parse('2026-09-09T10:00:00.000Z')
+  const session = createImportSession(
+    {
+      criteria: { role: 'Backend Engineer' },
+      candidates: [{ id: 'candidate-1', fullName: 'Original Name' }],
+    },
+    createdAt,
+  )
+
+  const updated = updateImportSession(
+    session.id,
+    {
+      criteria: session.criteria,
+      candidates: [{ id: 'candidate-1', fullName: 'Enriched Name' }],
+    },
+    createdAt + 1_000,
+  )
+
+  assert.equal(updated.candidates[0].fullName, 'Enriched Name')
+  assert.throws(
+    () => getImportSession(session.id, createdAt + IMPORT_SESSION_TTL_MS),
+    ImportSessionNotFoundError,
   )
 })

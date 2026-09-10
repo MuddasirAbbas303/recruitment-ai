@@ -626,6 +626,8 @@ textarea {
 
 .bulk-save-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 0.6rem;
 }
 
@@ -663,6 +665,16 @@ textarea {
 .search-action-message.error {
   color: #991b1b;
   background: #fee2e2;
+}
+
+.enrichment-progress {
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: 0.65rem;
+  color: #1e40af;
+  background: #dbeafe;
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .candidate-search-table-wrapper {
@@ -843,6 +855,24 @@ textarea {
   background: #fef3c7;
 }
 
+.candidate-search-table .candidate-name-cell {
+  display: grid;
+  justify-items: start;
+  gap: 0.4rem;
+  min-width: 9rem;
+}
+
+.enriched-badge {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.25rem 0.5rem;
+  color: #075985;
+  background: #e0f2fe;
+  font-size: 0.68rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
 .search-notes-cell {
   min-width: 13rem;
 }
@@ -901,6 +931,342 @@ textarea {
   border-color: #bfdbfe;
   color: #1d4ed8;
   background: #eff6ff;
+}
+
+.search-result-actions .enrich-candidate-button {
+  grid-column: 1 / -1;
+  border-color: #a5f3fc;
+  color: #0e7490;
+  background: #ecfeff;
+}
+
+.search-result-actions .interview-invite-button {
+  grid-column: 1 / -1;
+  border-color: #c4b5fd;
+  color: #6d28d9;
+  background: #f5f3ff;
+}
+
+.outreach-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: 1.5rem;
+  background: rgb(15 23 42 / 55%);
+}
+
+.outreach-panel {
+  box-sizing: border-box;
+  display: grid;
+  gap: 1rem;
+  width: min(42rem, 100%);
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  padding: 1.35rem;
+  border-radius: 0.9rem;
+  background: #ffffff;
+  box-shadow: 0 1.5rem 4rem rgb(15 23 42 / 30%);
+}
+
+.outreach-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.outreach-heading h3,
+.outreach-heading p {
+  margin: 0;
+}
+
+.outreach-heading h3 {
+  color: #0f172a;
+  font-size: 1.2rem;
+}
+
+.outreach-heading p {
+  margin-top: 0.3rem;
+  color: #64748b;
+  font-size: 0.86rem;
+}
+
+.outreach-close {
+  border: 0;
+  padding: 0.1rem 0.35rem;
+  color: #64748b;
+  background: transparent;
+  font: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.outreach-recipient {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.85rem;
+  border-radius: 0.65rem;
+  background: #f8fafc;
+}
+
+.outreach-recipient dt {
+  color: #64748b;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.outreach-recipient dd {
+  margin: 0.25rem 0 0;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.outreach-recipient.linkedin-recipient {
+  grid-template-columns: 1fr;
+}
+
+.outreach-field {
+  display: grid;
+  gap: 0.4rem;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.outreach-field input,
+.outreach-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.65rem;
+  padding: 0.75rem;
+  color: #0f172a;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 400;
+}
+
+.outreach-field textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.outreach-message {
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 0.6rem;
+  font-size: 0.84rem;
+}
+
+.outreach-message.success {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.outreach-message.error {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.outreach-character-count {
+  justify-self: end;
+  margin: -0.55rem 0 0;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.outreach-character-count.invalid {
+  color: #b91c1c;
+}
+
+.outreach-copy-feedback {
+  margin: 0;
+  color: #166534;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.outreach-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.outreach-actions a,
+.outreach-actions button {
+  border: 1px solid #cbd5e1;
+  border-radius: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  color: #334155;
+  background: #ffffff;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.outreach-actions .outreach-generate {
+  border-color: #2563eb;
+  color: #ffffff;
+  background: #2563eb;
+}
+
+.outreach-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.activity-state {
+  margin: 0;
+  padding: 1.5rem;
+  border: 1px dashed #cbd5e1;
+  border-radius: 0.65rem;
+  color: #64748b;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.activity-timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-timeline li {
+  position: relative;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0 0 1.25rem 1.5rem;
+  border-left: 2px solid #dbeafe;
+}
+
+.activity-timeline li:last-child {
+  padding-bottom: 0;
+}
+
+.activity-timeline li::before {
+  position: absolute;
+  top: 0.25rem;
+  left: -0.43rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: #2563eb;
+  content: '';
+}
+
+.activity-timeline time,
+.activity-timeline span {
+  color: #64748b;
+  font-size: 0.76rem;
+  text-transform: capitalize;
+}
+
+.activity-timeline strong {
+  color: #0f172a;
+  font-size: 0.92rem;
+}
+
+.activity-timeline p {
+  margin: 0.25rem 0 0;
+  padding: 0.7rem;
+  border-radius: 0.55rem;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.activity-interview-details {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+  padding: 0.75rem;
+  border-radius: 0.55rem;
+  background: #eef2ff;
+}
+
+.activity-interview-details b {
+  color: #312e81;
+  font-size: 0.84rem;
+}
+
+.activity-interview-details span {
+  color: #475569;
+  text-transform: none;
+}
+
+.interview-invitation-panel {
+  width: min(52rem, 100%);
+}
+
+.interview-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.interview-form-grid label {
+  display: grid;
+  gap: 0.4rem;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.interview-form-grid input,
+.interview-form-grid select,
+.interview-form-grid textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.65rem;
+  padding: 0.7rem 0.75rem;
+  color: #0f172a;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 400;
+}
+
+.interview-form-grid input:read-only {
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.interview-form-grid .interview-full-width {
+  grid-column: 1 / -1;
+}
+
+.interview-generate-button {
+  justify-self: start;
+  border: 0;
+  border-radius: 0.65rem;
+  padding: 0.75rem 1rem;
+  color: #ffffff;
+  background: #2563eb;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.interview-generate-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .candidate-database {
@@ -1277,6 +1643,14 @@ textarea {
 
   .candidate-search-grid {
     grid-template-columns: 1fr;
+  }
+
+  .interview-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .interview-form-grid .interview-full-width {
+    grid-column: auto;
   }
 
   .search-candidates-button {

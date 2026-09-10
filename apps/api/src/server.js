@@ -15,6 +15,33 @@ import {
   updateCandidate,
 } from './services/candidateService.js'
 import { importCandidateSearchResults } from './services/candidateImportService.js'
+import {
+  createCandidateActivity,
+  listCandidateActivities,
+} from './services/candidateActivityService.js'
+import {
+  CandidateExportValidationError,
+  generateCandidateWorkbook,
+  getCandidateExportFilename,
+} from './services/candidateExportService.js'
+import {
+  CandidateOutreachGenerationError,
+  CandidateOutreachValidationError,
+  generateCandidateOutreach,
+  generateLinkedInOutreach,
+} from './services/candidateOutreachService.js'
+import {
+  generateInterviewCalendar,
+  generateInterviewInvitation,
+  getInterviewCalendarFilename,
+  InterviewInvitationGenerationError,
+  InterviewInvitationValidationError,
+} from './services/candidateInterviewService.js'
+import {
+  CandidateEnrichmentNotFoundError,
+  CandidateEnrichmentUnavailableError,
+  enrichPublicCandidate,
+} from './services/candidateEnrichmentService.js'
 import { searchCandidates } from './services/candidateSearchService.js'
 import {
   CandidateSourceConfigurationError,
@@ -232,9 +259,10 @@ app.use(
     origin(origin, callback) {
       callback(null, !origin || allowedBrowserOrigins.has(origin))
     },
+    exposedHeaders: ['Content-Disposition'],
   }),
 )
-app.use(express.json())
+app.use(express.json({ limit: '5mb' }))
 
 app.get('/health', (_request, response) => {
   response.json({
@@ -323,6 +351,225 @@ app.post('/api/candidates/search', async (request, response) => {
   }
 })
 
+app.post('/api/candidates/generate-outreach', async (request, response) => {
+  try {
+    const outreach = await generateCandidateOutreach(request.body)
+    response.json({ success: true, ...outreach })
+  } catch (error) {
+    if (error instanceof CandidateOutreachValidationError) {
+      response.status(400).json({
+        success: false,
+        error: error.message,
+        details: error.details,
+      })
+      return
+    }
+
+    if (error instanceof GroqConfigurationError) {
+      response.status(500).json({
+        success: false,
+        error: error.message,
+      })
+      return
+    }
+
+    if (error instanceof GroqServiceError) {
+      response.status(error.statusCode).json({
+        success: false,
+        error: error.message,
+      })
+      return
+    }
+
+    if (error instanceof CandidateOutreachGenerationError) {
+      response.status(502).json({
+        success: false,
+        error: error.message,
+      })
+      return
+    }
+
+    console.error('Candidate outreach generation failed.', {
+      errorType: error?.constructor?.name,
+    })
+    response.status(500).json({
+      success: false,
+      error: 'Unable to generate outreach.',
+    })
+  }
+})
+
+app.post(
+  '/api/candidates/generate-linkedin-outreach',
+  async (request, response) => {
+    try {
+      const outreach = await generateLinkedInOutreach(request.body)
+      response.json({ success: true, ...outreach })
+    } catch (error) {
+      if (error instanceof CandidateOutreachValidationError) {
+        response.status(400).json({
+          success: false,
+          error: error.message,
+          details: error.details,
+        })
+        return
+      }
+
+      if (error instanceof GroqConfigurationError) {
+        response.status(500).json({
+          success: false,
+          error: error.message,
+        })
+        return
+      }
+
+      if (error instanceof GroqServiceError) {
+        response.status(error.statusCode).json({
+          success: false,
+          error: error.message,
+        })
+        return
+      }
+
+      if (error instanceof CandidateOutreachGenerationError) {
+        response.status(502).json({
+          success: false,
+          error: error.message,
+        })
+        return
+      }
+
+      console.error('LinkedIn outreach generation failed.', {
+        errorType: error?.constructor?.name,
+      })
+      response.status(500).json({
+        success: false,
+        error: 'Unable to generate LinkedIn outreach.',
+      })
+    }
+  },
+)
+
+app.post(
+  '/api/candidates/generate-interview-invitation',
+  async (request, response) => {
+    try {
+      const invitation = await generateInterviewInvitation(request.body)
+      response.json({ success: true, ...invitation })
+    } catch (error) {
+      if (error instanceof InterviewInvitationValidationError) {
+        response.status(400).json({
+          success: false,
+          error: error.message,
+          details: error.details,
+        })
+        return
+      }
+
+      if (error instanceof GroqConfigurationError) {
+        response.status(500).json({
+          success: false,
+          error: error.message,
+        })
+        return
+      }
+
+      if (error instanceof GroqServiceError) {
+        response.status(error.statusCode).json({
+          success: false,
+          error: error.message,
+        })
+        return
+      }
+
+      if (error instanceof InterviewInvitationGenerationError) {
+        response.status(502).json({
+          success: false,
+          error: error.message,
+        })
+        return
+      }
+
+      console.error('Interview invitation generation failed.', {
+        errorType: error?.constructor?.name,
+      })
+      response.status(500).json({
+        success: false,
+        error: 'Unable to generate interview invitation.',
+      })
+    }
+  },
+)
+
+app.post('/api/candidates/interview-calendar', (request, response) => {
+  try {
+    const calendar = generateInterviewCalendar(request.body)
+    const filename = getInterviewCalendarFilename(
+      request.body.candidate,
+      request.body.interview,
+    )
+
+    response.setHeader('Content-Type', 'text/calendar; charset=utf-8')
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename}"`,
+    )
+    response.setHeader('Content-Length', calendar.length)
+    response.send(calendar)
+  } catch (error) {
+    if (error instanceof InterviewInvitationValidationError) {
+      response.status(400).json({
+        success: false,
+        error: error.message,
+        details: error.details,
+      })
+      return
+    }
+
+    console.error('Interview calendar generation failed.', {
+      errorType: error?.constructor?.name,
+    })
+    response.status(500).json({
+      success: false,
+      error: 'Unable to create interview calendar invitation.',
+    })
+  }
+})
+
+app.post('/api/candidates/export', async (request, response) => {
+  try {
+    const workbook = await generateCandidateWorkbook(request.body)
+
+    response.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${getCandidateExportFilename()}"`,
+    )
+    response.setHeader('Content-Length', workbook.length)
+    response.send(workbook)
+  } catch (error) {
+    if (error instanceof CandidateExportValidationError) {
+      response.status(400).json({
+        success: false,
+        error: error.message,
+        details: error.details,
+      })
+      return
+    }
+
+    console.error('Candidate export failed.', {
+      errorType: error?.constructor?.name,
+    })
+    response.status(500).json({
+      success: false,
+      error: 'Unable to export candidates.',
+    })
+  }
+})
+
 app.post(
   '/api/candidates/import-search-results',
   async (request, response) => {
@@ -372,12 +619,89 @@ app.get('/api/candidates/import-sessions/:id', (request, response) => {
   }
 })
 
+app.post('/api/candidates/enrich-public', async (request, response) => {
+  try {
+    const result = await enrichPublicCandidate(request.body)
+    response.json({ success: true, ...result })
+  } catch (error) {
+    if (
+      error instanceof CandidateEnrichmentNotFoundError ||
+      error instanceof ImportSessionNotFoundError
+    ) {
+      response.status(404).json({
+        success: false,
+        error: error.message,
+      })
+      return
+    }
+
+    if (error instanceof CandidateEnrichmentUnavailableError) {
+      response.status(502).json({
+        success: false,
+        error: error.message,
+      })
+      return
+    }
+
+    if (error instanceof GroqConfigurationError) {
+      response.status(500).json({
+        success: false,
+        error: error.message,
+      })
+      return
+    }
+
+    if (error instanceof GroqServiceError) {
+      response.status(error.statusCode).json({
+        success: false,
+        error: error.message,
+      })
+      return
+    }
+
+    handleCandidateApiError(
+      error,
+      response,
+      'Unable to enrich candidate from public sources.',
+    )
+  }
+})
+
 app.get('/api/candidates', async (request, response) => {
   try {
     const candidates = await listCandidates(request.query)
     response.json({ success: true, candidates })
   } catch (error) {
     handleCandidateApiError(error, response, 'Unable to load candidates.')
+  }
+})
+
+app.get('/api/candidates/:id/activities', async (request, response) => {
+  try {
+    const activities = await listCandidateActivities(request.params.id)
+    response.json({ success: true, activities })
+  } catch (error) {
+    handleCandidateApiError(
+      error,
+      response,
+      'Unable to load candidate activities.',
+    )
+  }
+})
+
+app.post('/api/candidates/:id/activities', async (request, response) => {
+  try {
+    const result = await createCandidateActivity(
+      request.params.id,
+      request.body,
+    )
+    response.status(201).json({ success: true, ...result })
+  } catch (error) {
+    handleCandidateApiError(
+      error,
+      response,
+      'Unable to create candidate activity.',
+    )
   }
 })
 
