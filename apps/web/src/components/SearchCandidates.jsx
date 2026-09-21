@@ -19,6 +19,8 @@ const initialSearch = {
 }
 const visibleSkillCount = 4
 const linkedinConnectionMaxLength = 250
+const sourcingCriteriaStorageKey = 'recruitment-ai:last-sourcing-criteria'
+const maximumAutomaticEnrichments = 5
 
 function parseList(value) {
   return [
@@ -91,6 +93,106 @@ function sortCandidateResults(candidates) {
   })
 }
 
+function toStoredSourcingCriteria(criteria) {
+  return {
+    role: criteria.role,
+    requiredSkills: criteria.requiredSkills,
+    preferredSkills: criteria.preferredSkills,
+    ...(criteria.minExperience !== undefined && {
+      minExperience: criteria.minExperience,
+    }),
+    ...(criteria.maxExperience !== undefined && {
+      maxExperience: criteria.maxExperience,
+    }),
+    location: criteria.location,
+    keywords: criteria.keywords,
+    excludeKeywords: criteria.excludeKeywords,
+  }
+}
+
+function persistSourcingCriteria(criteria) {
+  try {
+    window.localStorage.setItem(
+      sourcingCriteriaStorageKey,
+      JSON.stringify(toStoredSourcingCriteria(criteria)),
+    )
+  } catch {
+    // The imported candidates can still be shown if browser storage is blocked.
+  }
+}
+
+function readStoredSourcingCriteria() {
+  try {
+    const value = JSON.parse(
+      window.localStorage.getItem(sourcingCriteriaStorageKey),
+    )
+
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null
+    }
+
+    const textKeys = ['role', 'location']
+    const listKeys = [
+      'requiredSkills',
+      'preferredSkills',
+      'keywords',
+      'excludeKeywords',
+    ]
+
+    if (
+      !textKeys.every((key) => typeof value[key] === 'string') ||
+      !listKeys.every(
+        (key) =>
+          Array.isArray(value[key]) &&
+          value[key].every((item) => typeof item === 'string'),
+      ) ||
+      !['minExperience', 'maxExperience'].every(
+        (key) =>
+          value[key] === undefined ||
+          (Number.isFinite(value[key]) && value[key] >= 0),
+      )
+    ) {
+      return null
+    }
+
+    return toStoredSourcingCriteria(value)
+  } catch {
+    return null
+  }
+}
+
+function toSearchForm(criteria) {
+  return {
+    role: criteria.role,
+    requiredSkills: criteria.requiredSkills.join(', '),
+    preferredSkills: criteria.preferredSkills.join(', '),
+    minExperience: criteria.minExperience ?? '',
+    maxExperience: criteria.maxExperience ?? '',
+    location: criteria.location,
+    keywords: criteria.keywords.join(', '),
+    excludeKeywords: criteria.excludeKeywords.join(', '),
+    source: 'external',
+  }
+}
+
+function mergeCandidateResults(currentResults, updatedResults) {
+  return sortCandidateResults(
+    updatedResults.map((updatedCandidate) => {
+      const currentCandidate = currentResults.find(
+        (candidate) => candidate.id === updatedCandidate.id,
+      )
+
+      return currentCandidate
+        ? {
+            ...currentCandidate,
+            ...updatedCandidate,
+            notes: currentCandidate.notes ?? updatedCandidate.notes,
+          }
+        : updatedCandidate
+    }),
+  )
+}
+
 function toExportCandidate(candidate) {
   const analysis = candidate.matchAnalysis
 
@@ -154,6 +256,12 @@ function SearchCandidates() {
   const [externalSearchOpened, setExternalSearchOpened] = useState(false)
   const [importBannerCount, setImportBannerCount] = useState(null)
   const [importError, setImportError] = useState(null)
+  const [importCriteriaUnavailable, setImportCriteriaUnavailable] =
+    useState(false)
+  const [isProcessingImport, setIsProcessingImport] = useState(false)
+  const [importProcessingProgress, setImportProcessingProgress] =
+    useState(null)
+  const [importProcessingNotice, setImportProcessingNotice] = useState(null)
   const [activeImportSessionId, setActiveImportSessionId] = useState(null)
   const [enrichingCandidateIds, setEnrichingCandidateIds] = useState([])
   const [isBulkEnriching, setIsBulkEnriching] = useState(false)
@@ -185,22 +293,29 @@ function SearchCandidates() {
     const abortController = new AbortController()
     setSearchStatus('loading-import')
     setImportError(null)
+    setImportCriteriaUnavailable(false)
+    setImportProcessingNotice(null)
 
-    fetch(
-      `${candidatesApiUrl}/import-sessions/${encodeURIComponent(importSessionId)}`,
-      { signal: abortController.signal },
-    )
-      .then(async (response) => {
+    async function loadAndProcessImport() {
+      let importLoaded = false
+
+      try {
+        const response = await fetch(
+          `${candidatesApiUrl}/import-sessions/${encodeURIComponent(importSessionId)}`,
+          { signal: abortController.signal },
+        )
         const result = await response.json()
 
         if (!response.ok) {
-          throw new Error(result.error || 'Unable to load imported candidates.')
+          throw new Error(
+            result.error || 'Unable to load imported candidates.',
+          )
         }
 
-        return result
-      })
-      .then((result) => {
         const importedResults = sortCandidateResults(result.results ?? [])
+        const sourcingCriteria =
+          readStoredSourcingCriteria() ?? result.criteria ?? null
+        importLoaded = true
 
         setResults(importedResults)
         setSelectedCandidateIds([])
@@ -217,13 +332,118 @@ function SearchCandidates() {
           '',
           `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
         )
-      })
-      .catch((error) => {
-        if (error.name !== 'AbortError') {
-          setSearchStatus('idle')
-          setImportError('Unable to load imported candidates.')
+
+        if (!sourcingCriteria) {
+          setImportCriteriaUnavailable(true)
+          return
         }
-      })
+
+        setSearch(toSearchForm(sourcingCriteria))
+        setIsProcessingImport(true)
+        const candidatesToEnrich = importedResults.slice(
+          0,
+          maximumAutomaticEnrichments,
+        )
+        let enrichmentFailureCount = 0
+
+        for (const [index, candidate] of candidatesToEnrich.entries()) {
+          setImportProcessingProgress({
+            current: index + 1,
+            total: candidatesToEnrich.length,
+          })
+
+          try {
+            const enrichmentResponse = await fetch(
+              `${candidatesApiUrl}/enrich-public`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  candidate: {
+                    id: candidate.id,
+                    fullName: candidate.fullName,
+                    linkedinUrl: candidate.linkedinUrl,
+                    currentTitle: candidate.currentTitle,
+                    currentCompany: candidate.currentCompany,
+                    location: candidate.location,
+                    searchSnippet: candidate.searchSnippet,
+                  },
+                  importSessionId,
+                }),
+                signal: abortController.signal,
+              },
+            )
+            const enrichmentResult = await enrichmentResponse.json()
+
+            if (!enrichmentResponse.ok) {
+              throw new Error(
+                enrichmentResult.error || 'Unable to enrich candidate.',
+              )
+            }
+
+            setResults((currentResults) =>
+              mergeCandidateResults(currentResults, [
+                ...currentResults.filter(
+                  (currentCandidate) => currentCandidate.id !== candidate.id,
+                ),
+                enrichmentResult.candidate,
+              ]),
+            )
+          } catch (error) {
+            if (error.name === 'AbortError') {
+              throw error
+            }
+
+            enrichmentFailureCount += 1
+          }
+        }
+
+        const scoringResponse = await fetch(
+          `${candidatesApiUrl}/import-sessions/${encodeURIComponent(importSessionId)}/score`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sourcingCriteria),
+            signal: abortController.signal,
+          },
+        )
+        const scoringResult = await scoringResponse.json()
+
+        if (!scoringResponse.ok) {
+          throw new Error(
+            scoringResult.error || 'Unable to score imported candidates.',
+          )
+        }
+
+        setResults((currentResults) =>
+          mergeCandidateResults(currentResults, scoringResult.results ?? []),
+        )
+
+        if (enrichmentFailureCount > 0) {
+          setImportProcessingNotice(
+            `${enrichmentFailureCount} ${enrichmentFailureCount === 1 ? 'candidate could' : 'candidates could'} not be enriched. They remain visible and were scored using the available Google information.`,
+          )
+        }
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          if (!importLoaded) {
+            setSearchStatus('idle')
+            setImportError('Unable to load imported candidates.')
+          } else {
+            setImportProcessingNotice(
+              'Imported candidates remain visible, but automatic processing could not be completed.',
+            )
+          }
+        }
+      } finally {
+        if (!abortController.signal.aborted) {
+          setIsProcessingImport(false)
+          setImportProcessingProgress(null)
+        }
+      }
+    }
+
+    loadAndProcessImport()
 
     return () => abortController.abort()
   }, [])
@@ -317,10 +537,15 @@ function SearchCandidates() {
     setExternalSearchOpened(shouldOpenGoogle)
     setImportBannerCount(null)
     setImportError(null)
+    setImportCriteriaUnavailable(false)
+    setIsProcessingImport(false)
+    setImportProcessingProgress(null)
+    setImportProcessingNotice(null)
     setActiveImportSessionId(null)
     setEnrichmentProgress(null)
 
     if (shouldOpenGoogle) {
+      persistSourcingCriteria(payload)
       openGoogleSearch(payload)
     }
 
@@ -985,7 +1210,9 @@ function SearchCandidates() {
           type="submit"
           className="search-candidates-button"
           disabled={
-            searchStatus === 'searching' || searchStatus === 'loading-import'
+            searchStatus === 'searching' ||
+            searchStatus === 'loading-import' ||
+            isProcessingImport
           }
         >
           {searchStatus === 'searching'
@@ -1024,6 +1251,31 @@ function SearchCandidates() {
       {importError && (
         <p className="candidate-search-state error" role="alert">
           {importError}
+        </p>
+      )}
+
+      {importCriteriaUnavailable && (
+        <p className="candidate-search-state error" role="status">
+          Search criteria were unavailable. Imported candidates are shown
+          without automatic scoring.
+        </p>
+      )}
+
+      {isProcessingImport && (
+        <div className="enrichment-progress" role="status">
+          <strong>Processing imported candidates...</strong>
+          {importProcessingProgress && (
+            <span>
+              Processing candidate {importProcessingProgress.current} of{' '}
+              {importProcessingProgress.total}
+            </span>
+          )}
+        </div>
+      )}
+
+      {importProcessingNotice && (
+        <p className="search-action-message error" role="status">
+          {importProcessingNotice}
         </p>
       )}
 

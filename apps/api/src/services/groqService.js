@@ -378,6 +378,7 @@ function getGroqErrorDiagnostics(error) {
         getHeader(error?.headers, 'x-request-id'),
     ),
     retryAfterMs: getRetryAfterDelayMs(error?.headers),
+    errorName: getSafeDiagnosticValue(error?.name),
   }
 }
 
@@ -392,6 +393,20 @@ function classifyGroqError(diagnostics) {
     )
   ) {
     return 'quota_or_billing'
+  }
+
+  if (
+    diagnostics.status === 404 ||
+    markers.some((marker) => marker.includes('model_not_found'))
+  ) {
+    return 'model_unavailable'
+  }
+
+  if (
+    diagnostics.errorName === 'APIConnectionTimeoutError' ||
+    diagnostics.errorName === 'APITimeoutError'
+  ) {
+    return 'timeout'
   }
 
   return diagnostics.status === 429 ? 'temporary_rate_limit' : undefined
@@ -461,6 +476,17 @@ function handleGroqError(error, fallbackMessage) {
     )
   }
 
+  if (classification === 'model_unavailable') {
+    throw new GroqServiceError(
+      'Configured Groq model is unavailable.',
+      503,
+    )
+  }
+
+  if (classification === 'timeout') {
+    throw new GroqServiceError('Groq request timed out.', 504)
+  }
+
   throw new GroqServiceError(fallbackMessage)
 }
 
@@ -491,12 +517,25 @@ function handleGroqBrowserSearchError(error) {
     )
   }
 
+  if (classification === 'model_unavailable') {
+    throw new GroqServiceError(
+      'Configured Groq model is unavailable.',
+      503,
+    )
+  }
+
+  if (classification === 'timeout') {
+    throw new GroqServiceError('Groq request timed out.', 504)
+  }
+
   throw new GroqServiceError('External candidate search is unavailable.')
 }
 
 function parseStructuredContent(content, outputSchema, fallbackMessage) {
   if (typeof content !== 'string' || !content.trim()) {
-    throw new GroqServiceError(fallbackMessage)
+    throw new GroqServiceError(
+      'Groq returned an invalid structured response.',
+    )
   }
 
   let parsedContent
@@ -504,13 +543,17 @@ function parseStructuredContent(content, outputSchema, fallbackMessage) {
   try {
     parsedContent = JSON.parse(content)
   } catch {
-    throw new GroqServiceError(fallbackMessage)
+    throw new GroqServiceError(
+      'Groq returned an invalid structured response.',
+    )
   }
 
   const validation = outputSchema.safeParse(parsedContent)
 
   if (!validation.success) {
-    throw new GroqServiceError(fallbackMessage)
+    throw new GroqServiceError(
+      'Groq returned an invalid structured response.',
+    )
   }
 
   return validation.data

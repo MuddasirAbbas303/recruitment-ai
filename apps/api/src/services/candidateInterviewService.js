@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import {
-  generateInterviewInvitationWithGroq,
-  interviewInvitationSchema,
-} from './groqService.js'
-import { generateInterviewInvitationWithMock } from './mockAiService.js'
+import { generateInterviewInvitation as generateInterviewInvitationWithAI } from './ai/aiService.js'
+import { interviewInvitationSchema } from './groqService.js'
 
 const optionalText = (maximum) =>
   z.string().trim().max(maximum).nullable().optional()
@@ -85,10 +82,6 @@ function getValidationDetails(error) {
     path: issue.path.join('.'),
     message: issue.message,
   }))
-}
-
-function isMockAiEnabled() {
-  return process.env.USE_MOCK_AI?.trim().toLowerCase() === 'true'
 }
 
 function getTimeZoneParts(date, timezone) {
@@ -230,10 +223,7 @@ export async function generateInterviewInvitation(input, dependencies = {}) {
     currentTitle: validated.candidate.currentTitle || null,
   }
   const generator =
-    dependencies.generator ??
-    (isMockAiEnabled()
-      ? generateInterviewInvitationWithMock
-      : generateInterviewInvitationWithGroq)
+    dependencies.generator ?? generateInterviewInvitationWithAI
   const generated = await generator(
     providerCandidate,
     validated.interview,

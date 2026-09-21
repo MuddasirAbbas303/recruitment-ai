@@ -58,7 +58,8 @@ function buildDiscoveryCompletion() {
               type: 'browser_search',
               search_results: [
                 {
-                  url: 'https://github.com/synthetic-developer',
+                  url:
+                    'https://github.com/synthetic-developer?utm_source=openai',
                   title: 'Synthetic Developer on GitHub',
                   snippet:
                     'Senior Backend Developer at Example Labs in Riga, Latvia. Node.js and TypeScript. 8 years of experience.',
@@ -93,7 +94,9 @@ test('public enrichment queries exclude LinkedIn and personal social sites', () 
   assert.ok(queries.length <= 5)
   assert.ok(queries.every((query) => query.includes('-site:linkedin.com')))
   assert.ok(queries.some((query) => query.includes('GitHub')))
-  assert.match(prompt, /Do not open, browse, or use LinkedIn profile pages/)
+  assert.match(prompt, /Do not use LinkedIn pages/)
+  assert.match(prompt, /Perform one focused web search/)
+  assert.ok(prompt.length < 700)
 })
 
 test('enrichment uses supported public evidence, updates the session, and re-ranks', async () => {

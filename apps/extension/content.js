@@ -72,8 +72,8 @@ function getDisplayTitle(anchor, container) {
   )
 }
 
-function getFullName(displayTitle) {
-  return displayTitle.split(/\s(?:[-|–—]|·)\s/)[0].trim()
+function getFullName(resultTitle) {
+  return resultTitle.split(/\s(?:[-|–—]|·)\s/)[0].trim()
 }
 
 function getSearchSnippet(container) {
@@ -95,18 +95,45 @@ function getSearchSnippet(container) {
   return ''
 }
 
-function getSecondaryText(container) {
-  const selectors = ['cite', '.qLRx3b', '.byrV5b']
+function getVisibleSecondaryText(container, excludedText = []) {
+  const selectors = [
+    'cite',
+    '.qLRx3b',
+    '.byrV5b',
+    '.VuuXrf',
+    '.MUxGbd',
+  ]
+  const excludedValues = new Set(
+    excludedText.map((value) => value.trim()).filter(Boolean),
+  )
+  const values = []
 
   for (const selector of selectors) {
-    const secondaryText = getVisibleText(container?.querySelector(selector))
+    container?.querySelectorAll?.(selector).forEach((element) => {
+      const value = getVisibleText(element)
 
-    if (secondaryText) {
-      return secondaryText
+      if (
+        value &&
+        !excludedValues.has(value) &&
+        !values.includes(value)
+      ) {
+        values.push(value)
+      }
+    })
+
+    const fallbackElement = container?.querySelector(selector)
+    const fallbackValue = getVisibleText(fallbackElement)
+
+    if (
+      fallbackValue &&
+      !excludedValues.has(fallbackValue) &&
+      !values.includes(fallbackValue)
+    ) {
+      values.push(fallbackValue)
     }
   }
 
-  return ''
+  return values.join(' · ').slice(0, 2_000)
 }
 
 function scanVisibleLinkedInResults() {
@@ -124,19 +151,24 @@ function scanVisibleLinkedInResults() {
     }
 
     const container = findResultContainer(anchor)
-    const displayTitle = getDisplayTitle(anchor, container)
-    const fullName = getFullName(displayTitle)
+    const resultTitle = getDisplayTitle(anchor, container)
+    const fullName = getFullName(resultTitle)
 
     if (!fullName) {
       return
     }
 
+    const searchSnippet = getSearchSnippet(container)
+
     profilesByUrl.set(linkedinUrl, {
       fullName,
-      displayTitle,
       linkedinUrl,
-      searchSnippet: getSearchSnippet(container),
-      secondaryText: getSecondaryText(container),
+      resultTitle,
+      searchSnippet,
+      visibleSecondaryText: getVisibleSecondaryText(container, [
+        resultTitle,
+        searchSnippet,
+      ]),
       source: 'google-linkedin',
     })
   })

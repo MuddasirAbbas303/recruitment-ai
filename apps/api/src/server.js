@@ -14,7 +14,10 @@ import {
   saveCandidate,
   updateCandidate,
 } from './services/candidateService.js'
-import { importCandidateSearchResults } from './services/candidateImportService.js'
+import {
+  importCandidateSearchResults,
+  scoreImportSessionCandidates,
+} from './services/candidateImportService.js'
 import {
   createCandidateActivity,
   listCandidateActivities,
@@ -48,14 +51,16 @@ import {
   CandidateSourceRequestError,
 } from './services/candidateSources/candidateSourceFactory.js'
 import {
+  AIConfigurationError,
+  AIServiceError,
   analyzeResume,
+  isMockAIEnabled,
+  testAIConnection,
+} from './services/ai/aiService.js'
+import {
   analyzeResumeRequestSchema,
   candidateAnalysisSchema,
-  GroqConfigurationError,
-  GroqServiceError,
-  testGroqConnection,
 } from './services/groqService.js'
-import { analyzeResumeWithMock } from './services/mockAiService.js'
 import {
   createImportSession,
   getImportSession,
@@ -218,10 +223,6 @@ function parseJobFields(body) {
   return validation.data.job
 }
 
-function isMockAiEnabled() {
-  return process.env.USE_MOCK_AI?.trim().toLowerCase() === 'true'
-}
-
 async function mapWithConcurrency(items, mapper, concurrency) {
   const results = new Array(items.length)
   let nextIndex = 0
@@ -276,6 +277,22 @@ app.get('/health', sendHealthResponse)
 app.get('/api/health', sendHealthResponse)
 
 function handleCandidateApiError(error, response, fallbackMessage) {
+  if (error instanceof AIConfigurationError) {
+    response.status(500).json({
+      success: false,
+      error: error.message,
+    })
+    return
+  }
+
+  if (error instanceof AIServiceError) {
+    response.status(error.statusCode).json({
+      success: false,
+      error: error.message,
+    })
+    return
+  }
+
   if (error instanceof CandidateSourceConfigurationError) {
     console.error('Candidate source configuration failed.', {
       errorType: error.constructor.name,
@@ -368,7 +385,7 @@ app.post('/api/candidates/generate-outreach', async (request, response) => {
       return
     }
 
-    if (error instanceof GroqConfigurationError) {
+    if (error instanceof AIConfigurationError) {
       response.status(500).json({
         success: false,
         error: error.message,
@@ -376,7 +393,7 @@ app.post('/api/candidates/generate-outreach', async (request, response) => {
       return
     }
 
-    if (error instanceof GroqServiceError) {
+    if (error instanceof AIServiceError) {
       response.status(error.statusCode).json({
         success: false,
         error: error.message,
@@ -418,7 +435,7 @@ app.post(
         return
       }
 
-      if (error instanceof GroqConfigurationError) {
+      if (error instanceof AIConfigurationError) {
         response.status(500).json({
           success: false,
           error: error.message,
@@ -426,7 +443,7 @@ app.post(
         return
       }
 
-      if (error instanceof GroqServiceError) {
+      if (error instanceof AIServiceError) {
         response.status(error.statusCode).json({
           success: false,
           error: error.message,
@@ -469,7 +486,7 @@ app.post(
         return
       }
 
-      if (error instanceof GroqConfigurationError) {
+      if (error instanceof AIConfigurationError) {
         response.status(500).json({
           success: false,
           error: error.message,
@@ -477,7 +494,7 @@ app.post(
         return
       }
 
-      if (error instanceof GroqServiceError) {
+      if (error instanceof AIServiceError) {
         response.status(error.statusCode).json({
           success: false,
           error: error.message,
@@ -602,7 +619,11 @@ app.post(
 app.get('/api/candidates/import-sessions/:id', (request, response) => {
   try {
     const importSession = getImportSession(request.params.id)
-    response.json({ success: true, results: importSession.candidates })
+    response.json({
+      success: true,
+      criteria: importSession.criteria,
+      results: importSession.candidates,
+    })
   } catch (error) {
     if (error instanceof ImportSessionNotFoundError) {
       response.status(404).json({
@@ -621,6 +642,33 @@ app.get('/api/candidates/import-sessions/:id', (request, response) => {
     })
   }
 })
+
+app.post(
+  '/api/candidates/import-sessions/:id/score',
+  async (request, response) => {
+    try {
+      const { criteria, results } = await scoreImportSessionCandidates(
+        request.params.id,
+        request.body,
+      )
+      response.json({ success: true, criteria, results })
+    } catch (error) {
+      if (error instanceof ImportSessionNotFoundError) {
+        response.status(404).json({
+          success: false,
+          error: error.message,
+        })
+        return
+      }
+
+      handleCandidateApiError(
+        error,
+        response,
+        'Unable to score imported candidates.',
+      )
+    }
+  },
+)
 
 app.post('/api/candidates/enrich-public', async (request, response) => {
   try {
@@ -646,7 +694,7 @@ app.post('/api/candidates/enrich-public', async (request, response) => {
       return
     }
 
-    if (error instanceof GroqConfigurationError) {
+    if (error instanceof AIConfigurationError) {
       response.status(500).json({
         success: false,
         error: error.message,
@@ -654,7 +702,7 @@ app.post('/api/candidates/enrich-public', async (request, response) => {
       return
     }
 
-    if (error instanceof GroqServiceError) {
+    if (error instanceof AIServiceError) {
       response.status(error.statusCode).json({
         success: false,
         error: error.message,
@@ -728,10 +776,10 @@ app.get('/api/candidates/:id', async (request, response) => {
 
 app.get('/api/ai/test', async (_request, response) => {
   try {
-    const result = await testGroqConnection()
+    const result = await testAIConnection()
     response.json(result)
   } catch (error) {
-    if (error instanceof GroqConfigurationError) {
+    if (error instanceof AIConfigurationError) {
       response.status(500).json({
         success: false,
         error: error.message,
@@ -739,7 +787,7 @@ app.get('/api/ai/test', async (_request, response) => {
       return
     }
 
-    if (error instanceof GroqServiceError) {
+    if (error instanceof AIServiceError) {
       response.status(error.statusCode).json({
         success: false,
         error: error.message,
@@ -747,14 +795,14 @@ app.get('/api/ai/test', async (_request, response) => {
       return
     }
 
-    console.error('Unexpected Groq API test failure.', {
-      provider: 'groq',
+    console.error('Unexpected AI provider test failure.', {
+      provider: process.env.AI_PROVIDER?.trim().toLowerCase() || 'groq',
       errorType: error?.constructor?.name,
       classification: 'unexpected',
     })
     response.status(500).json({
       success: false,
-      error: 'Unable to test the Groq connection.',
+      error: 'Unable to test the AI provider connection.',
     })
   }
 })
@@ -781,7 +829,7 @@ app.post('/api/ai/analyze', async (request, response) => {
     )
     response.json(result)
   } catch (error) {
-    if (error instanceof GroqConfigurationError) {
+    if (error instanceof AIConfigurationError) {
       response.status(500).json({
         success: false,
         error: error.message,
@@ -789,7 +837,7 @@ app.post('/api/ai/analyze', async (request, response) => {
       return
     }
 
-    if (error instanceof GroqServiceError) {
+    if (error instanceof AIServiceError) {
       response.status(error.statusCode).json({
         success: false,
         error: error.message,
@@ -798,7 +846,7 @@ app.post('/api/ai/analyze', async (request, response) => {
     }
 
     console.error('Unexpected resume analysis error.', {
-      provider: 'groq',
+      provider: process.env.AI_PROVIDER?.trim().toLowerCase() || 'groq',
       errorType: error?.constructor?.name,
       classification: 'unexpected',
     })
@@ -843,9 +891,7 @@ app.post('/api/resumes/analyze', (request, response) => {
       return
     }
 
-    const analyzeCandidate = isMockAiEnabled()
-      ? analyzeResumeWithMock
-      : analyzeResume
+    const analyzeCandidate = analyzeResume
     let processedResumes
 
     try {
@@ -870,13 +916,13 @@ app.post('/api/resumes/analyze', (request, response) => {
               errorType:
                 analysisError instanceof ResumeParserError
                   ? 'resume_parser_error'
-                  : analysisError instanceof GroqConfigurationError ||
-                      analysisError instanceof GroqServiceError
-                    ? 'groq_service_error'
+                  : analysisError instanceof AIConfigurationError ||
+                      analysisError instanceof AIServiceError
+                    ? 'ai_service_error'
                     : 'unexpected_error',
-              classification: isMockAiEnabled()
+              classification: isMockAIEnabled()
                 ? 'mock_analysis_failure'
-                : 'groq_analysis_failure',
+                : 'ai_analysis_failure',
             })
 
             return {
@@ -885,14 +931,14 @@ app.post('/api/resumes/analyze', (request, response) => {
               error:
                 analysisError instanceof ResumeParserError
                   ? analysisError.message
-                  : analysisError instanceof GroqConfigurationError ||
-                      analysisError instanceof GroqServiceError
+                  : analysisError instanceof AIConfigurationError ||
+                      analysisError instanceof AIServiceError
                     ? analysisError.message
-                    : 'Unable to analyze using Groq.',
+                    : 'Unable to analyze the resume.',
             }
           }
         },
-        isMockAiEnabled() ? request.files.length : 1,
+        isMockAIEnabled() ? request.files.length : 1,
       )
     } finally {
       await removeUploadedFiles(request.files)

@@ -677,6 +677,13 @@ textarea {
   font-weight: 700;
 }
 
+div.enrichment-progress {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
 .candidate-search-table-wrapper {
   overflow-x: auto;
   border: 1px solid #e2e8f0;

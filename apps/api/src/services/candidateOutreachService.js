@@ -1,14 +1,12 @@
 import { z } from 'zod'
 import {
   candidateOutreachSchema,
-  generateCandidateOutreachWithGroq,
-  generateLinkedInOutreachWithGroq,
   linkedinOutreachSchema,
 } from './groqService.js'
 import {
-  generateCandidateOutreachWithMock,
-  generateLinkedInOutreachWithMock,
-} from './mockAiService.js'
+  generateEmailOutreach as generateEmailOutreachWithAI,
+  generateLinkedInOutreach as generateLinkedInOutreachWithAI,
+} from './ai/aiService.js'
 
 export const LINKEDIN_CONNECTION_MAX_LENGTH = 250
 export const outreachTypeSchema = z.enum([
@@ -92,10 +90,6 @@ export class CandidateOutreachGenerationError extends Error {
   }
 }
 
-function isMockAiEnabled() {
-  return process.env.USE_MOCK_AI?.trim().toLowerCase() === 'true'
-}
-
 function cleanOptionalText(value) {
   return value || null
 }
@@ -155,10 +149,7 @@ export async function generateCandidateOutreach(
     validation.data.job,
   )
   const generator =
-    dependencies.generator ??
-    (isMockAiEnabled()
-      ? generateCandidateOutreachWithMock
-      : generateCandidateOutreachWithGroq)
+    dependencies.generator ?? generateEmailOutreachWithAI
   const generatedOutreach = await generator(candidate, job)
   const outputValidation = candidateOutreachSchema.safeParse(generatedOutreach)
 
@@ -189,12 +180,9 @@ export async function generateLinkedInOutreach(
     validation.data.candidate,
     validation.data.job,
   )
-  const generator =
-    dependencies.generator ??
-    (isMockAiEnabled()
-      ? generateLinkedInOutreachWithMock
-      : generateLinkedInOutreachWithGroq)
-  const generatedOutreach = await generator(type, candidate, job)
+  const generatedOutreach = dependencies.generator
+    ? await dependencies.generator(type, candidate, job)
+    : await generateLinkedInOutreachWithAI(candidate, job, type)
   const outputValidation = linkedinOutreachSchema.safeParse(generatedOutreach)
 
   if (

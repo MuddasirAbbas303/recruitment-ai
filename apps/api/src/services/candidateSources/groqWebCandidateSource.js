@@ -1,17 +1,16 @@
 import { createHash } from 'node:crypto'
-import OpenAI from 'openai'
 import {
-  GroqConfigurationError,
-  GroqServiceError,
-  normalizeWebCandidateResults,
-} from '../groqService.js'
+  AIConfigurationError,
+  AIServiceError,
+  normalizeCandidateSearchResults,
+  searchPublicProfessionalWeb,
+} from '../ai/aiService.js'
 import {
   CandidateSource,
   CandidateSourceConfigurationError,
   CandidateSourceRequestError,
 } from './candidateSource.js'
 
-const GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
 const DEFAULT_SEARCH_MODEL = 'openai/gpt-oss-20b'
 const DEFAULT_TIMEOUT_MS = 60_000
 const DEFAULT_RESULT_LIMIT = 5
@@ -363,6 +362,14 @@ function mapDiscoveryError(error, startedAt) {
     durationMs: Date.now() - startedAt,
   })
 
+  if (error instanceof AIConfigurationError) {
+    return new CandidateSourceConfigurationError(error.message)
+  }
+
+  if (error instanceof AIServiceError) {
+    return new CandidateSourceRequestError(error.message, error.statusCode)
+  }
+
   if (getSafeErrorStatus(error) === 429) {
     return new CandidateSourceRequestError(
       'Groq browser search rate limit exceeded.',
@@ -377,16 +384,20 @@ function mapDiscoveryError(error, startedAt) {
 }
 
 export class GroqWebCandidateSource extends CandidateSource {
-  constructor({
-    apiKey = process.env.GROQ_API_KEY?.trim(),
-    client,
-    normalizer = normalizeWebCandidateResults,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
-    resultLimit = getConfiguredResultLimit(),
-  } = {}) {
+  constructor(options = {}) {
     super('groq-web')
-    this.apiKey = apiKey
+    const {
+      apiKey,
+      client,
+      discover,
+      normalizer = normalizeCandidateSearchResults,
+      timeoutMs = DEFAULT_TIMEOUT_MS,
+      resultLimit = getConfiguredResultLimit(),
+    } = options
+    this.hasLegacyApiKeyOption = Object.hasOwn(options, 'apiKey')
+    this.legacyApiKey = apiKey
     this.client = client
+    this.discover = discover
     this.normalizer = normalizer
     this.timeoutMs = timeoutMs
     this.resultLimit = Math.min(
@@ -395,20 +406,8 @@ export class GroqWebCandidateSource extends CandidateSource {
     )
   }
 
-  getClient() {
-    return (
-      this.client ??
-      new OpenAI({
-        apiKey: this.apiKey,
-        baseURL: GROQ_BASE_URL,
-        maxRetries: 0,
-        timeout: this.timeoutMs,
-      })
-    )
-  }
-
   async searchCandidates(criteria) {
-    if (!this.apiKey) {
+    if (this.hasLegacyApiKeyOption && !this.legacyApiKey) {
       throw new CandidateSourceConfigurationError(
         'Groq API key is not configured.',
       )
@@ -418,17 +417,17 @@ export class GroqWebCandidateSource extends CandidateSource {
     let searchCompletion
 
     try {
-      searchCompletion = await this.getClient().chat.completions.create({
-        model: getSearchModel(),
-        messages: [
-          {
-            role: 'user',
-            content: buildGroqWebSearchPrompt(criteria, this.resultLimit),
-          },
-        ],
-        tools: [{ type: 'browser_search' }],
-        tool_choice: 'required',
-      })
+      const prompt = buildGroqWebSearchPrompt(criteria, this.resultLimit)
+      searchCompletion = this.discover
+        ? await this.discover(prompt, this.timeoutMs)
+        : this.client
+          ? await this.client.chat.completions.create({
+              model: getSearchModel(),
+              messages: [{ role: 'user', content: prompt }],
+              tools: [{ type: 'browser_search' }],
+              tool_choice: 'required',
+            })
+          : await searchPublicProfessionalWeb(prompt, this.timeoutMs)
     } catch (error) {
       throw mapDiscoveryError(error, startedAt)
     }
@@ -467,13 +466,20 @@ export class GroqWebCandidateSource extends CandidateSource {
         durationMs: Date.now() - startedAt,
       })
 
-      if (error instanceof GroqConfigurationError) {
+      if (error instanceof AIConfigurationError) {
         throw new CandidateSourceConfigurationError(
-          'Groq API key is not configured.',
+          error.message,
         )
       }
 
-      if (error instanceof GroqServiceError || error instanceof Error) {
+      if (error instanceof AIServiceError) {
+        throw new CandidateSourceRequestError(
+          error.message,
+          error.statusCode,
+        )
+      }
+
+      if (error instanceof Error) {
         throw new CandidateSourceRequestError(
           'Unable to normalize candidate search results.',
         )

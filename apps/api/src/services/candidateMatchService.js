@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import {
-  analyzeSourcingCandidateWithGroq,
-  candidateMatchAnalysisSchema,
-} from './groqService.js'
-import { analyzeCandidateWithMock } from './mockCandidateMatchService.js'
+  analyzeCandidate as analyzeCandidateWithAI,
+  isMockAIEnabled,
+} from './ai/aiService.js'
+import { candidateMatchAnalysisSchema } from './groqService.js'
 
 const jobMatchSchema = z.object({
   role: z.string().trim().default(''),
@@ -47,18 +47,16 @@ const candidateMatchInputSchema = z.object({
 })
 
 export function isMockCandidateMatchingEnabled() {
-  return process.env.USE_MOCK_AI?.trim().toLowerCase() === 'true'
+  return isMockAIEnabled()
 }
 
 export async function analyzeCandidate(job, candidate) {
   const validatedJob = jobMatchSchema.parse(job)
   const validatedCandidate = candidateMatchInputSchema.parse(candidate)
-  const analysis = isMockCandidateMatchingEnabled()
-    ? await analyzeCandidateWithMock(validatedJob, validatedCandidate)
-    : await analyzeSourcingCandidateWithGroq(
-        validatedJob,
-        validatedCandidate,
-      )
+  const analysis = await analyzeCandidateWithAI(
+    validatedJob,
+    validatedCandidate,
+  )
 
   return candidateMatchAnalysisSchema.parse(analysis)
 }

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "test": "node --test --test-concurrency=1",
     "test:ai": "node scripts/testAnalyze.js",
     "test:groq-provider": "node scripts/verifyGroqProvider.js",
     "test:groq-web-source": "node scripts/verifyGroqWebCandidateSource.js",

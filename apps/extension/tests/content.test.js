@@ -15,14 +15,27 @@ function visibleText(text) {
   }
 }
 
-function resultAnchor({ href, title, snippet = '', visible = true }) {
+function resultAnchor({
+  href,
+  title,
+  snippet = '',
+  secondaryText = '',
+  visible = true,
+}) {
   const heading = visibleText(title)
   const container = {
     querySelector(selector) {
       if (selector === 'h3') return heading
       if (selector === '.VwiC3b' && snippet) return visibleText(snippet)
       if (selector === 'cite') return visibleText(href)
+      if (selector === '.qLRx3b' && secondaryText) {
+        return visibleText(secondaryText)
+      }
       return null
+    },
+    querySelectorAll(selector) {
+      const element = this.querySelector(selector)
+      return element ? [element] : []
     },
   }
 
@@ -85,6 +98,7 @@ test('keeps only visible LinkedIn profiles and deduplicates canonical URLs', () 
       href: 'https://www.linkedin.com/in/john-smith/?trk=first',
       title: 'John Smith - Backend Engineer | LinkedIn',
       snippet: 'Public professional snippet.',
+      secondaryText: 'Riga, Latvia',
     }),
     resultAnchor({
       href: 'https://lv.linkedin.com/in/john-smith',
@@ -105,11 +119,11 @@ test('keeps only visible LinkedIn profiles and deduplicates canonical URLs', () 
   assert.equal(results.length, 1)
   assert.deepEqual(JSON.parse(JSON.stringify(results[0])), {
     fullName: 'John Smith',
-    displayTitle: 'John Smith - Backend Engineer | LinkedIn',
     linkedinUrl: 'https://www.linkedin.com/in/john-smith',
+    resultTitle: 'John Smith - Backend Engineer | LinkedIn',
     searchSnippet: 'Public professional snippet.',
-    secondaryText:
-      'https://www.linkedin.com/in/john-smith/?trk=first',
+    visibleSecondaryText:
+      'https://www.linkedin.com/in/john-smith/?trk=first · Riga, Latvia',
     source: 'google-linkedin',
   })
 })

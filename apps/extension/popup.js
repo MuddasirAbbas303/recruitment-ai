@@ -125,7 +125,9 @@ importButton.addEventListener('click', async () => {
     candidates: selected.map((candidate) => ({
       fullName: candidate.fullName,
       linkedinUrl: candidate.linkedinUrl,
+      resultTitle: candidate.resultTitle,
       searchSnippet: candidate.searchSnippet,
+      visibleSecondaryText: candidate.visibleSecondaryText,
       source: 'google-linkedin',
     })),
   })
