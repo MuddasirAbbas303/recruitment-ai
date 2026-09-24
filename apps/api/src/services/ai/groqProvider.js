@@ -4,6 +4,7 @@ import {
   generateCandidateOutreachWithGroq,
   generateInterviewInvitationWithGroq,
   generateLinkedInOutreachWithGroq,
+  extractManualCandidateProfileWithGroq,
   GroqConfigurationError,
   GroqServiceError,
   normalizePublicCandidateEnrichment as normalizePublicCandidateEnrichmentWithGroq,
@@ -49,6 +50,12 @@ export class GroqProvider {
   analyzeCandidate(job, candidate) {
     return translateGroqErrors(() =>
       analyzeSourcingCandidateWithGroq(job, candidate),
+    )
+  }
+
+  extractManualCandidateProfile(profileText) {
+    return translateGroqErrors(() =>
+      extractManualCandidateProfileWithGroq(profileText),
     )
   }
 

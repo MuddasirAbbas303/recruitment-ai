@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import CandidateActivityPanel from './CandidateActivityPanel.jsx'
+import CandidateDetailsPanel from './CandidateDetailsPanel.jsx'
+import CandidateEmailDiscoveryModal from './CandidateEmailDiscoveryModal.jsx'
 import InterviewInvitationModal from './InterviewInvitationModal.jsx'
 import { candidatesApiUrl } from '../config/api.js'
 const candidateStatuses = [
@@ -49,6 +51,11 @@ function CandidateDatabase() {
   const [updateError, setUpdateError] = useState(null)
   const [activityCandidate, setActivityCandidate] = useState(null)
   const [interviewCandidate, setInterviewCandidate] = useState(null)
+  const [emailDiscoveryCandidate, setEmailDiscoveryCandidate] = useState(null)
+  const [detailsCandidateId, setDetailsCandidateId] = useState(null)
+  const detailsCandidate = candidates.find(
+    (candidate) => candidate.id === detailsCandidateId,
+  ) ?? null
 
   const loadCandidates = useCallback(async (candidateFilters = {}, signal) => {
     setLoadStatus('loading')
@@ -177,6 +184,23 @@ function CandidateDatabase() {
     } finally {
       setUpdatingCandidateId(null)
     }
+  }
+
+  async function updateCandidateDetails(candidate, changes) {
+    const response = await fetch(
+      `${candidatesApiUrl}/${encodeURIComponent(candidate.id)}/details`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(changes),
+      },
+    )
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.error || 'Unable to update candidate details.')
+    setCandidates((currentCandidates) => currentCandidates.map((currentCandidate) =>
+      currentCandidate.id === candidate.id ? result.candidate : currentCandidate,
+    ))
+    return result.candidate
   }
 
   return (
@@ -465,6 +489,12 @@ function CandidateDatabase() {
                     </td>
                     <td>
                       <div className="candidate-actions">
+                        <button
+                          type="button"
+                          onClick={() => setDetailsCandidateId(candidate.id)}
+                        >
+                          View Details
+                        </button>
                         {candidate.linkedinUrl ? (
                           <a
                             href={candidate.linkedinUrl}
@@ -486,6 +516,12 @@ function CandidateDatabase() {
                             Email
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => setEmailDiscoveryCandidate(candidate)}
+                        >
+                          Find Email
+                        </button>
 
                         <button
                           type="button"
@@ -536,6 +572,21 @@ function CandidateDatabase() {
         />
       )}
 
+      {detailsCandidate && (
+        <CandidateDetailsPanel
+          candidate={{ ...detailsCandidate, isSaved: true }}
+          actions={{
+            onSaveDetails: updateCandidateDetails,
+            onFindEmail: setEmailDiscoveryCandidate,
+            onEmail: (candidate) => {
+              window.location.href = `mailto:${candidate.email}`
+            },
+            onInviteInterview: setInterviewCandidate,
+          }}
+          onClose={() => setDetailsCandidateId(null)}
+        />
+      )}
+
       {interviewCandidate && (
         <InterviewInvitationModal
           candidate={interviewCandidate}
@@ -550,6 +601,22 @@ function CandidateDatabase() {
             setInterviewCandidate(savedCandidate)
           }}
           onClose={() => setInterviewCandidate(null)}
+        />
+      )}
+
+      {emailDiscoveryCandidate && (
+        <CandidateEmailDiscoveryModal
+          candidate={{ ...emailDiscoveryCandidate, isSaved: true }}
+          onConfirmed={(updatedCandidate) => {
+            setCandidates((currentCandidates) =>
+              currentCandidates.map((candidate) =>
+                candidate.id === updatedCandidate.id
+                  ? { ...candidate, ...updatedCandidate }
+                  : candidate,
+              ),
+            )
+          }}
+          onClose={() => setEmailDiscoveryCandidate(null)}
         />
       )}
     </section>

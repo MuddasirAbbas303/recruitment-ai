@@ -7,6 +7,16 @@ function isGoogleSearchPage() {
   )
 }
 
+function getSearchSessionId() {
+  const value = new URLSearchParams(window.location.search).get(
+    'recruitmentSearchSession',
+  )
+
+  return value && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : null
+}
+
 function isVisible(element) {
   if (!element || element.getClientRects().length === 0) {
     return false
@@ -19,9 +29,21 @@ function isVisible(element) {
 function extractDestinationUrl(href) {
   try {
     const url = new URL(href, window.location.href)
+    const hostname = url.hostname.toLowerCase()
+    const isGoogleHost =
+      hostname === 'google.com' || hostname.endsWith('.google.com')
 
-    if (url.hostname === 'www.google.com' && url.pathname === '/url') {
-      return url.searchParams.get('q') || url.searchParams.get('url') || ''
+    if (isGoogleHost) {
+      // Google sometimes wraps result destinations in /url?q=... or /url?url=....
+      // Other redirect formats (for example /goto?url=CAES...) are opaque tokens,
+      // so we deliberately reject them instead of guessing their destination.
+      if (url.pathname !== '/url') {
+        return ''
+      }
+
+      const destination = url.searchParams.get('q') || url.searchParams.get('url')
+
+      return destination || ''
     }
 
     return url.href
@@ -49,6 +71,52 @@ function normalizeLinkedInUrl(href) {
   } catch {
     return null
   }
+}
+
+function findVerifiedLinkedInUrl(anchor, container) {
+  const candidateElements = [
+    anchor,
+    ...(container?.querySelectorAll?.(
+      'a[href], [data-url], [data-href], [data-target-url]',
+    ) ?? []),
+  ]
+  const attributeNames = [
+    'href',
+    'data-url',
+    'data-href',
+    'data-target-url',
+    'ping',
+  ]
+
+  for (const element of candidateElements) {
+    for (const attributeName of attributeNames) {
+      const value =
+        element === anchor && attributeName === 'href'
+          ? anchor.href
+          : element.getAttribute?.(attributeName)
+      const linkedinUrl = normalizeLinkedInUrl(value)
+
+      if (linkedinUrl) {
+        return linkedinUrl
+      }
+    }
+  }
+
+  return null
+}
+
+function isVisibleLinkedInResult(anchor, container) {
+  const visibleEvidence = [
+    anchor.textContent,
+    container?.textContent,
+    ...['cite', '.VuuXrf', '.qLRx3b', '.byrV5b'].map(
+      (selector) => container?.querySelector?.(selector)?.textContent,
+    ),
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return /(?:^|[\s·|])linkedin(?:$|[\s·|])/i.test(visibleEvidence)
 }
 
 function getVisibleText(element) {
@@ -97,6 +165,7 @@ function getSearchSnippet(container) {
 
 function getVisibleSecondaryText(container, excludedText = []) {
   const selectors = [
+    '.YrbPuc',
     'cite',
     '.qLRx3b',
     '.byrV5b',
@@ -136,21 +205,60 @@ function getVisibleSecondaryText(container, excludedText = []) {
   return values.join(' · ').slice(0, 2_000)
 }
 
+function mergeEvidenceText(...values) {
+  const uniqueValues = []
+
+  values.forEach((value) => {
+    const normalizedValue = value?.replace(/\s+/g, ' ').trim()
+
+    if (normalizedValue && !uniqueValues.includes(normalizedValue)) {
+      uniqueValues.push(normalizedValue)
+    }
+  })
+
+  return uniqueValues.join(' · ').slice(0, 20_000)
+}
+
+function mergeProfileEvidence(existingProfile, nextProfile) {
+  const richerTitle =
+    nextProfile.resultTitle.length > existingProfile.resultTitle.length
+      ? nextProfile.resultTitle
+      : existingProfile.resultTitle
+
+  return {
+    ...existingProfile,
+    fullName:
+      existingProfile.fullName,
+    resultTitle: richerTitle,
+    searchSnippet: mergeEvidenceText(
+      existingProfile.searchSnippet,
+      nextProfile.searchSnippet,
+    ),
+    visibleSecondaryText: mergeEvidenceText(
+      existingProfile.visibleSecondaryText,
+      normalizeLinkedInUrl(nextProfile.visibleSecondaryText)
+        ? ''
+        : nextProfile.visibleSecondaryText,
+    ).slice(0, 2_000),
+    sourceUrl: existingProfile.sourceUrl || nextProfile.sourceUrl || null,
+  }
+}
+
 function scanVisibleLinkedInResults() {
-  const profilesByUrl = new Map()
+  const profilesByIdentity = new Map()
 
   document.querySelectorAll('a[href]').forEach((anchor) => {
     if (!isVisible(anchor)) {
       return
     }
 
-    const linkedinUrl = normalizeLinkedInUrl(anchor.href)
+    const container = findResultContainer(anchor)
+    const linkedinUrl = findVerifiedLinkedInUrl(anchor, container)
 
-    if (!linkedinUrl || profilesByUrl.has(linkedinUrl)) {
+    if (!linkedinUrl && !isVisibleLinkedInResult(anchor, container)) {
       return
     }
 
-    const container = findResultContainer(anchor)
     const resultTitle = getDisplayTitle(anchor, container)
     const fullName = getFullName(resultTitle)
 
@@ -160,9 +268,13 @@ function scanVisibleLinkedInResults() {
 
     const searchSnippet = getSearchSnippet(container)
 
-    profilesByUrl.set(linkedinUrl, {
+    const profile = {
       fullName,
       linkedinUrl,
+      sourceUrl: normalizeLinkedInUrl(anchor.href)
+        ? extractDestinationUrl(anchor.href)
+        : linkedinUrl,
+      requiresLinkedInUrl: !linkedinUrl,
       resultTitle,
       searchSnippet,
       visibleSecondaryText: getVisibleSecondaryText(container, [
@@ -170,13 +282,25 @@ function scanVisibleLinkedInResults() {
         searchSnippet,
       ]),
       source: 'google-linkedin',
-    })
+    }
+    const identity = linkedinUrl || [
+      'unverified',
+      fullName.toLowerCase(),
+      resultTitle.toLowerCase(),
+    ].join(':')
+    const existingProfile = profilesByIdentity.get(identity)
+
+    profilesByIdentity.set(
+      identity,
+      existingProfile ? mergeProfileEvidence(existingProfile, profile) : profile,
+    )
   })
 
-  return [...profilesByUrl.values()]
+  return [...profilesByIdentity.values()]
 }
 
 globalThis.RecruitmentAiLinkedInScanner = Object.freeze({
+  getSearchSessionId,
   normalizeLinkedInUrl,
   scanVisibleLinkedInResults,
 })
@@ -194,6 +318,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   sendResponse({
     supported: true,
     candidates: scanVisibleLinkedInResults(),
+    searchSessionId: getSearchSessionId(),
   })
   return false
 })

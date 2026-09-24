@@ -87,6 +87,24 @@ h1 {
   white-space: nowrap;
 }
 
+.profile-details input[type="url"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #cbd2df;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.profile-details .url-required,
+.url-validation {
+  color: #b42318;
+}
+
+.url-validation:empty {
+  display: none;
+}
+
 .profile-details span {
   color: #667085;
   font-size: 12px;

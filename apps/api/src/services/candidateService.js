@@ -21,6 +21,14 @@ const optionalEmail = z
     z.null(),
   ])
   .optional()
+const optionalEmploymentHistory = z.array(z.object({
+  title: z.string().trim().min(1).max(255),
+  company: z.string().trim().min(1).max(255),
+  startDate: z.string().trim().min(1).max(50),
+  endDate: z.string().trim().min(1).max(50),
+  isCurrent: z.boolean().optional(),
+  sourceUrl: z.string().trim().max(2_000).nullable().optional(),
+}).strict()).max(50).optional()
 
 const candidateInputSchema = z.object({
   firstName: optionalString,
@@ -42,6 +50,8 @@ const candidateInputSchema = z.object({
     ])
     .optional(),
   summary: optionalText,
+  employmentHistory: optionalEmploymentHistory,
+  fieldOrigins: z.record(z.string(), z.string().trim().max(50)).optional(),
   notes: optionalText,
   source: optionalString,
   status: optionalString,
@@ -539,4 +549,37 @@ export async function updateCandidate(id, input) {
 
     return candidate
   })
+}
+
+const professionalProfileUpdateSchema = z
+  .object({
+    currentTitle: optionalString,
+    currentCompany: optionalString,
+    location: optionalString,
+    yearsOfExperience: z.number().finite().nonnegative().nullable().optional(),
+    skills: z.array(z.string().trim().min(1).max(255)).max(100).optional(),
+    summary: optionalText,
+    email: optionalEmail,
+  })
+  .strict()
+  .refine((update) => Object.keys(update).length > 0, {
+    message: 'At least one professional field is required.',
+  })
+
+export async function updateCandidateProfessionalProfile(id, input) {
+  const idValidation = z.string().uuid().safeParse(id)
+  const validation = professionalProfileUpdateSchema.safeParse(input)
+
+  if (!idValidation.success || !validation.success) {
+    throw new CandidateValidationError('Invalid candidate profile update.')
+  }
+
+  const candidate = await Candidate.findByPk(idValidation.data)
+
+  if (!candidate) {
+    throw new CandidateNotFoundError('Candidate not found.')
+  }
+
+  await candidate.update(validation.data)
+  return candidate
 }

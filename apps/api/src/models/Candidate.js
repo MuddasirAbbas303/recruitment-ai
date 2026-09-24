@@ -67,6 +67,16 @@ Candidate.init(
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    employmentHistory: {
+      type: DataTypes.JSONB,
+      allowNull: false,
+      defaultValue: [],
+    },
+    fieldOrigins: {
+      type: DataTypes.JSONB,
+      allowNull: false,
+      defaultValue: {},
+    },
     notes: {
       type: DataTypes.TEXT,
       allowNull: true,

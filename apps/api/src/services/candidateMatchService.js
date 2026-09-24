@@ -3,7 +3,9 @@ import {
   analyzeCandidate as analyzeCandidateWithAI,
   isMockAIEnabled,
 } from './ai/aiService.js'
-import { candidateMatchAnalysisSchema } from './groqService.js'
+import {
+  applyCandidateEvidenceRules,
+} from './candidateMatchSchemas.js'
 
 const jobMatchSchema = z.object({
   role: z.string().trim().default(''),
@@ -58,5 +60,9 @@ export async function analyzeCandidate(job, candidate) {
     validatedCandidate,
   )
 
-  return candidateMatchAnalysisSchema.parse(analysis)
+  return applyCandidateEvidenceRules(
+    validatedJob,
+    validatedCandidate,
+    analysis,
+  )
 }

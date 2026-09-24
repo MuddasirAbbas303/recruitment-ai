@@ -65,7 +65,11 @@ function unique(values) {
 
 function scoreSkills(requestedSkills, candidateSkills) {
   if (requestedSkills.length === 0) {
-    return { matched: [], missing: [], score: 100 }
+    return { matched: [], missing: [], score: 100, known: true }
+  }
+
+  if (candidateSkills.length === 0) {
+    return { matched: [], missing: [], score: null, known: false }
   }
 
   const normalizedCandidateSkills = new Set(
@@ -82,6 +86,7 @@ function scoreSkills(requestedSkills, candidateSkills) {
     matched,
     missing,
     score: clampScore((matched.length / requestedSkills.length) * 100),
+    known: true,
   }
 }
 
@@ -103,7 +108,7 @@ function scoreRole(requestedRole, candidateTitle) {
   const normalizedTitle = normalize(candidateTitle)
 
   if (!normalizedTitle) {
-    return 0
+    return null
   }
 
   if (
@@ -137,7 +142,7 @@ function scoreExperience(yearsOfExperience, minExperience, maxExperience) {
   }
 
   if (yearsOfExperience === null) {
-    return 0
+    return null
   }
 
   if (
@@ -175,7 +180,7 @@ function scoreLocation(requestedLocation, candidateLocation) {
   const normalizedCandidateLocation = normalize(candidateLocation)
 
   if (!normalizedCandidateLocation) {
-    return 0
+    return null
   }
 
   if (
@@ -207,7 +212,29 @@ function candidateProfessionalText(candidate) {
   )
 }
 
+function calculateAvailableScore(components, adjustment) {
+  const availableComponents = components.filter(
+    (component) => Number.isFinite(component.score) && component.relevant,
+  )
+  const availableWeight = availableComponents.reduce(
+    (total, component) => total + component.weight,
+    0,
+  )
+
+  if (availableWeight === 0) {
+    return null
+  }
+
+  return clampScore(
+    availableComponents.reduce(
+      (total, component) => total + component.score * component.weight,
+      0,
+    ) / availableWeight + adjustment,
+  )
+}
+
 export async function analyzeCandidateWithMock(job, candidate) {
+  const evidenceCoverage = getCandidateEvidenceCoverage(job, candidate)
   const requiredSkills = scoreSkills(
     job.requiredSkills,
     candidate.skills,
@@ -235,16 +262,48 @@ export async function analyzeCandidateWithMock(job, candidate) {
   )
   const keywordAdjustment =
     matchedKeywords.length * 2 -
-    missingKeywords.length * 5 -
+    (evidenceCoverage.percentage === 100 ? missingKeywords.length * 5 : 0) -
     excludedKeywordMatches.length * 15
-  const overallScore = clampScore(
-    requiredSkills.score * 0.35 +
-      preferredSkills.score * 0.15 +
-      experienceScore * 0.2 +
-      roleScore * 0.2 +
-      locationScore * 0.1 +
-      keywordAdjustment,
-  )
+  const completeEvidence = evidenceCoverage.percentage === 100
+  const overallScore = evidenceCoverage.sufficientForScoring
+    ? completeEvidence
+      ? clampScore(
+          requiredSkills.score * 0.35 +
+            preferredSkills.score * 0.15 +
+            experienceScore * 0.2 +
+            roleScore * 0.2 +
+            locationScore * 0.1 +
+            keywordAdjustment,
+        )
+      : calculateAvailableScore(
+          [
+            {
+              score: requiredSkills.score,
+              weight: 0.35,
+              relevant: job.requiredSkills.length > 0,
+            },
+            {
+              score: preferredSkills.score,
+              weight: 0.15,
+              relevant: job.preferredSkills.length > 0,
+            },
+            {
+              score: experienceScore,
+              weight: 0.2,
+              relevant:
+                job.minExperience !== undefined ||
+                job.maxExperience !== undefined,
+            },
+            { score: roleScore, weight: 0.2, relevant: Boolean(job.role) },
+            {
+              score: locationScore,
+              weight: 0.1,
+              relevant: Boolean(job.location),
+            },
+          ],
+          keywordAdjustment,
+        )
+    : null
   const strengths = []
   const concerns = []
 
@@ -260,11 +319,11 @@ export async function analyzeCandidateWithMock(job, candidate) {
     )
   }
 
-  if (experienceScore === 100) {
+  if (experienceScore === 100 && candidate.yearsOfExperience !== null) {
     strengths.push('Experience is within the requested range.')
   }
 
-  if (roleScore >= 75) {
+  if (Number.isFinite(roleScore) && roleScore >= 75) {
     strengths.push('Current title is strongly aligned with the requested role.')
   }
 
@@ -272,17 +331,17 @@ export async function analyzeCandidateWithMock(job, candidate) {
     strengths.push('Location aligns with the sourcing requirement.')
   }
 
-  if (requiredSkills.missing.length > 0) {
+  if (completeEvidence && requiredSkills.missing.length > 0) {
     concerns.push(
       `Missing explicit evidence for: ${requiredSkills.missing.join(', ')}.`,
     )
   }
 
-  if (experienceScore < 100) {
+  if (Number.isFinite(experienceScore) && experienceScore < 100) {
     concerns.push('Experience falls outside the requested range.')
   }
 
-  if (job.role && roleScore < 60) {
+  if (job.role && Number.isFinite(roleScore) && roleScore < 60) {
     concerns.push('Current title has limited overlap with the requested role.')
   }
 
@@ -290,7 +349,7 @@ export async function analyzeCandidateWithMock(job, candidate) {
     concerns.push('Location does not match the stated sourcing location.')
   }
 
-  if (missingKeywords.length > 0) {
+  if (completeEvidence && missingKeywords.length > 0) {
     concerns.push(
       `Missing requested keyword evidence: ${missingKeywords.join(', ')}.`,
     )
@@ -302,8 +361,18 @@ export async function analyzeCandidateWithMock(job, candidate) {
     )
   }
 
+  if (evidenceCoverage.unknownFields.length > 0) {
+    concerns.push(
+      `Information unavailable for: ${evidenceCoverage.unknownFields.join(', ')}.`,
+    )
+  }
+
   if (strengths.length === 0) {
-    strengths.push('No strong job-relevant match was identified.')
+    strengths.push(
+      overallScore === null
+        ? 'More professional information is needed to identify strengths.'
+        : 'No strong job-relevant match was identified.',
+    )
   }
 
   if (concerns.length === 0) {
@@ -320,9 +389,14 @@ export async function analyzeCandidateWithMock(job, candidate) {
       ...requiredSkills.matched,
       ...preferredSkills.matched,
     ]),
-    missingSkills: requiredSkills.missing,
+    missingSkills: completeEvidence ? requiredSkills.missing : [],
     strengths,
     concerns,
-    summary: `${candidate.fullName} received a deterministic ${overallScore}% match score against the supplied sourcing criteria. This is development-only recruiter decision support and does not make an employment decision.`,
+    evidenceCoverage,
+    summary:
+      overallScore === null
+        ? `Insufficient information to calculate a meaningful match score. Evidence coverage is ${evidenceCoverage.percentage}%.`
+        : `${candidate.fullName} received a deterministic ${overallScore}% match score against the supplied sourcing criteria with ${evidenceCoverage.percentage}% evidence coverage. This is development-only recruiter decision support and does not make an employment decision.`,
   }
 }
+import { getCandidateEvidenceCoverage } from './candidateMatchSchemas.js'

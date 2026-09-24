@@ -156,6 +156,9 @@ export async function analyzeCandidateResults(
           ...candidate,
           matchScore: matchAnalysis.overallScore,
           matchAnalysis,
+          ...(!Number.isFinite(matchAnalysis.overallScore) && {
+            matchError: 'Insufficient information',
+          }),
         }
       } catch (error) {
         console.error('Candidate match analysis failed.', {

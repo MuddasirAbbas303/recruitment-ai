@@ -1,10 +1,10 @@
 # Recruitment AI LinkedIn Importer
 
-This Manifest V3 Chrome extension scans only the currently visible Google
-search-results page. It detects visible public LinkedIn profile links, lets the
-recruiter select results, and sends the selected result metadata to the local
-Recruitment AI API. It does not open or scrape LinkedIn pages and does not save
-candidates automatically.
+This Manifest V3 Chrome extension scans the currently visible Google
+search-results page. On a LinkedIn profile explicitly opened by the recruiter,
+it can also read visible professional Experience entries and update the active
+temporary Recruitment AI import session. It never saves candidates
+automatically or accesses LinkedIn cookies or private APIs.
 
 ## Load locally in Chrome
 
@@ -15,8 +15,8 @@ candidates automatically.
 5. Reload any Google search-results page that was already open before the
    extension was installed.
 
-This first version works only on the current `https://www.google.com/search`
-results page.
+After changing extension files, click **Reload** on this extension at
+`chrome://extensions` before testing.
 
 ## Local API access
 
@@ -46,3 +46,7 @@ already exist; importing does not create database records. After a successful
 import, the extension opens or focuses Recruitment AI and the imported profiles
 appear in **Candidate Sourcing → Search Candidates**. Temporary import sessions
 expire after 30 minutes.
+
+To complete experience, open an imported candidate's LinkedIn profile, open
+the extension, and click **Update Candidate Experience**. Only visible entries
+with a job title, company, start date, and end date or Present are accepted.

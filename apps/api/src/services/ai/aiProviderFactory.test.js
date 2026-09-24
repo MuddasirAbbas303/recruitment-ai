@@ -5,6 +5,7 @@ import {
   AIServiceError,
   analyzeCandidate,
   analyzeResume,
+  extractManualCandidateProfile,
   generateEmailOutreach,
   generateInterviewInvitation,
   generateLinkedInOutreach,
@@ -69,6 +70,12 @@ const candidateAnalysis = {
   strengths: ['Relevant backend work'],
   concerns: [],
   summary: 'Strong professional alignment.',
+  evidenceCoverage: {
+    percentage: 100,
+    availableFields: ['title', 'skills', 'experience', 'location'],
+    unknownFields: [],
+    sufficientForScoring: true,
+  },
 }
 
 function preserveEnvironment(names) {
@@ -126,6 +133,14 @@ test('mock mode bypasses provider selection and all real provider clients', asyn
       typeof (await analyzeCandidate(sourcingJob, candidate)).overallScore,
       'number',
     )
+    assert.deepEqual(
+      (await extractManualCandidateProfile({
+        about: 'Backend specialist.',
+        workExperience: 'Senior Engineer at Example Labs',
+        skills: 'Node.js, AWS',
+      })).skills,
+      ['Node.js', 'AWS'],
+    )
     assert.ok((await generateEmailOutreach(candidate, sourcingJob)).subject)
     assert.ok(
       (await generateLinkedInOutreach(
@@ -158,6 +173,100 @@ test('mock mode bypasses provider selection and all real provider clients', asyn
   } finally {
     restore()
   }
+})
+
+test('OpenAI provider validates the shared manual profile extraction contract', async () => {
+  const extracted = {
+    currentTitle: 'Senior Engineer',
+    currentCompany: 'Example Labs',
+    location: null,
+    skills: ['Node.js'],
+    summary: 'Builds backend services.',
+    employmentHistory: [
+      {
+        jobTitle: 'Senior Engineer',
+        company: 'Example Labs',
+        startDate: 'Jan 2020',
+        endDate: 'Present',
+      },
+    ],
+  }
+  const provider = new OpenAIProvider({
+    model: 'test-openai-model',
+    client: { responses: { parse: async () => ({ output_parsed: extracted }) } },
+  })
+
+  assert.deepEqual(
+    await provider.extractManualCandidateProfile({
+      about: 'Builds backend services.',
+      workExperience: 'Senior Engineer at Example Labs, Jan 2020 - Present',
+      skills: 'Node.js',
+    }),
+    extracted,
+  )
+})
+
+test('OpenAI enrichment uses a strict supported schema and preserves employment evidence', async () => {
+  let requestBody
+  const output = {
+    candidate: {
+      fullName: 'Alex Morgan',
+      linkedinUrl: 'https://www.linkedin.com/in/alex-morgan',
+      currentTitle: 'Senior Engineer',
+      currentCompany: 'Example Labs',
+      location: null,
+      yearsOfExperience: 5,
+      employmentHistory: [
+        {
+          jobTitle: 'Senior Engineer',
+          company: 'Example Labs',
+          startDate: 'Jan 2021',
+          endDate: 'Present',
+          sourceUrl: 'https://example.com/team/alex-morgan',
+        },
+      ],
+      skills: ['Node.js'],
+      summary: 'Builds backend services.',
+      githubUrl: null,
+      portfolioUrl: null,
+      professionalUrls: ['https://example.com/team/alex-morgan'],
+    },
+    enrichment: {
+      enriched: true,
+      sources: [
+        { url: 'https://example.com/team/alex-morgan', type: 'company' },
+      ],
+    },
+  }
+  const provider = new OpenAIProvider({
+    model: 'test-openai-model',
+    client: {
+      responses: {
+        parse: async (request) => {
+          requestBody = request
+          return { output_parsed: output }
+        },
+      },
+    },
+  })
+
+  const result = await provider.normalizePublicCandidateEnrichment(
+    candidate,
+    { results: [{ url: 'https://example.com/team/alex-morgan' }] },
+  )
+  const schema = requestBody.text.format.schema
+  const employmentSchema =
+    schema.properties.candidate.properties.employmentHistory.items
+
+  assert.deepEqual(result.candidate.employmentHistory, output.candidate.employmentHistory)
+  assert.equal(schema.additionalProperties, false)
+  assert.deepEqual(
+    employmentSchema.required,
+    ['jobTitle', 'company', 'startDate', 'endDate', 'sourceUrl'],
+  )
+  assert.equal(employmentSchema.additionalProperties, false)
+  assert.equal(employmentSchema.properties.sourceUrl.format, undefined)
+  assert.match(employmentSchema.properties.sourceUrl.pattern, /^\^https/)
 })
 
 test('requires only the selected real provider key', async () => {
@@ -226,6 +335,7 @@ test('OpenAI provider preserves every existing structured application contract',
         currentCompany: null,
         location: 'Riga, Latvia',
         yearsOfExperience: null,
+        employmentHistory: [],
         skills: ['Node.js'],
         summary: 'Public professional summary.',
         githubUrl: 'https://github.com/alex-morgan',

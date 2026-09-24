@@ -7,6 +7,75 @@ const clearButton = document.querySelector('#clear')
 const importButton = document.querySelector('#import-selected')
 
 let candidates = []
+let searchSessionId = null
+let pageMode = 'google'
+
+function normalizeManualLinkedInUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null
+  }
+
+  try {
+    const url = new URL(value.trim())
+    const hostname = url.hostname.toLowerCase()
+    const profileMatch = url.pathname.match(/^\/in\/([^/?#]+)/i)
+
+    if (
+      !profileMatch ||
+      (hostname !== 'linkedin.com' && !hostname.endsWith('.linkedin.com'))
+    ) {
+      return null
+    }
+
+    return `https://www.linkedin.com/in/${profileMatch[1].toLowerCase()}`
+  } catch {
+    return null
+  }
+}
+
+function mergeEvidenceText(...values) {
+  return [...new Set(values.map((value) => value?.trim()).filter(Boolean))]
+    .join(' · ')
+}
+
+function mergeCandidatesForImport(selected) {
+  const candidatesByUrl = new Map()
+
+  selected.forEach((candidate) => {
+    const linkedinUrl = normalizeManualLinkedInUrl(candidate.linkedinUrl)
+
+    if (!linkedinUrl) {
+      return
+    }
+
+    const normalizedCandidate = { ...candidate, linkedinUrl }
+    const existingCandidate = candidatesByUrl.get(linkedinUrl)
+
+    candidatesByUrl.set(
+      linkedinUrl,
+      existingCandidate
+        ? {
+            ...existingCandidate,
+            resultTitle:
+              normalizedCandidate.resultTitle.length >
+              existingCandidate.resultTitle.length
+                ? normalizedCandidate.resultTitle
+                : existingCandidate.resultTitle,
+            searchSnippet: mergeEvidenceText(
+              existingCandidate.searchSnippet,
+              normalizedCandidate.searchSnippet,
+            ),
+            visibleSecondaryText: mergeEvidenceText(
+              existingCandidate.visibleSecondaryText,
+              normalizedCandidate.visibleSecondaryText,
+            ),
+          }
+        : normalizedCandidate,
+    )
+  })
+
+  return [...candidatesByUrl.values()]
+}
 
 function setStatus(message, state = '') {
   statusElement.textContent = message
@@ -21,7 +90,9 @@ function selectedCandidates() {
 }
 
 function updateImportButton() {
-  importButton.disabled = selectedCandidates().length === 0
+  const selected = selectedCandidates()
+  importButton.disabled =
+    selected.length === 0 || selected.some((candidate) => !candidate.linkedinUrl)
 }
 
 function formatLinkedInUrl(linkedinUrl) {
@@ -50,9 +121,42 @@ function renderCandidates() {
     name.textContent = candidate.fullName
 
     const url = document.createElement('span')
-    url.textContent = formatLinkedInUrl(candidate.linkedinUrl)
+
+    if (candidate.linkedinUrl) {
+      url.textContent = formatLinkedInUrl(candidate.linkedinUrl)
+    } else {
+      url.textContent = 'LinkedIn URL required'
+      url.className = 'url-required'
+    }
 
     details.append(name, url)
+
+    if (!candidate.linkedinUrl) {
+      const urlInput = document.createElement('input')
+      urlInput.type = 'url'
+      urlInput.placeholder = 'https://www.linkedin.com/in/profile'
+      urlInput.setAttribute(
+        'aria-label',
+        `LinkedIn profile URL for ${candidate.fullName}`,
+      )
+      const validationMessage = document.createElement('small')
+      validationMessage.className = 'url-validation'
+      urlInput.addEventListener('input', () => {
+        const normalizedUrl = normalizeManualLinkedInUrl(urlInput.value)
+        candidate.linkedinUrl = normalizedUrl
+        candidate.requiresLinkedInUrl = !normalizedUrl
+        validationMessage.textContent =
+          urlInput.value.trim() && !normalizedUrl
+            ? 'Enter a valid LinkedIn profile URL'
+            : ''
+        url.textContent = normalizedUrl
+          ? formatLinkedInUrl(normalizedUrl)
+          : 'LinkedIn URL required'
+        updateImportButton()
+      })
+      details.append(urlInput, validationMessage)
+    }
+
     label.append(checkbox, details)
     profilesElement.append(label)
   })
@@ -67,6 +171,35 @@ async function scanCurrentPage() {
     active: true,
     currentWindow: true,
   })
+
+  const isLinkedInProfile = /^https:\/\/([a-z]+\.)?linkedin\.com\/in\//i.test(
+    activeTab?.url ?? '',
+  )
+
+  if (isLinkedInProfile) {
+    try {
+      const result = await chrome.tabs.sendMessage(activeTab.id, {
+        type: 'READ_LINKEDIN_EXPERIENCE',
+      })
+      if (!result?.candidate) throw new Error('Profile unavailable')
+      pageMode = 'linkedin'
+      candidates = [result.candidate]
+      renderCandidates()
+      profilesElement.querySelector('input')?.click()
+      importButton.textContent = 'Update Candidate Experience'
+      setStatus(
+        result.candidate.employmentHistory.length > 0
+          ? `${result.candidate.employmentHistory.length} experience entries found`
+          : 'No complete visible experience entries found',
+        result.candidate.employmentHistory.length > 0 ? 'success' : 'empty',
+      )
+      importButton.disabled = result.candidate.employmentHistory.length === 0
+      return
+    } catch {
+      setStatus('Unable to read this LinkedIn profile. Reload it and try again.', 'error')
+      return
+    }
+  }
 
   if (!activeTab?.url?.startsWith('https://www.google.com/search')) {
     setStatus('Not on a supported Google search page', 'error')
@@ -84,6 +217,7 @@ async function scanCurrentPage() {
     }
 
     candidates = result.candidates ?? []
+    searchSessionId = result.searchSessionId ?? null
     renderCandidates()
     setStatus(
       candidates.length === 0
@@ -111,7 +245,25 @@ clearButton.addEventListener('click', () => {
 })
 
 importButton.addEventListener('click', async () => {
-  const selected = selectedCandidates()
+  if (pageMode === 'linkedin') {
+    const [candidate] = candidates
+    setStatus('Updating candidate experience...')
+    importButton.disabled = true
+    const response = await chrome.runtime.sendMessage({
+      type: 'IMPORT_LINKEDIN_EXPERIENCE',
+      candidate,
+    })
+    setStatus(
+      response?.ok
+        ? 'Candidate experience updated in Recruitment AI'
+        : response?.error || 'Experience update failed',
+      response?.ok ? 'success' : 'error',
+    )
+    importButton.disabled = false
+    return
+  }
+
+  const selected = mergeCandidatesForImport(selectedCandidates())
 
   if (selected.length === 0) {
     return
@@ -122,12 +274,14 @@ importButton.addEventListener('click', async () => {
 
   const response = await chrome.runtime.sendMessage({
     type: 'IMPORT_CANDIDATES',
+    searchSessionId,
     candidates: selected.map((candidate) => ({
       fullName: candidate.fullName,
       linkedinUrl: candidate.linkedinUrl,
       resultTitle: candidate.resultTitle,
       searchSnippet: candidate.searchSnippet,
       visibleSecondaryText: candidate.visibleSecondaryText,
+      sourceUrl: candidate.sourceUrl,
       source: 'google-linkedin',
     })),
   })
@@ -150,3 +304,8 @@ importButton.addEventListener('click', async () => {
 })
 
 scanCurrentPage()
+
+globalThis.RecruitmentAiPopup = Object.freeze({
+  mergeCandidatesForImport,
+  normalizeManualLinkedInUrl,
+})

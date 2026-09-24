@@ -4,6 +4,8 @@ import {
   buildLinkedInXrayQuery,
 } from '../utils/linkedinSearch.js'
 import CandidateActivityPanel from './CandidateActivityPanel.jsx'
+import CandidateDetailsPanel from './CandidateDetailsPanel.jsx'
+import CandidateEmailDiscoveryModal from './CandidateEmailDiscoveryModal.jsx'
 import InterviewInvitationModal from './InterviewInvitationModal.jsx'
 import { candidatesApiUrl } from '../config/api.js'
 const initialSearch = {
@@ -19,7 +21,6 @@ const initialSearch = {
 }
 const visibleSkillCount = 4
 const linkedinConnectionMaxLength = 250
-const sourcingCriteriaStorageKey = 'recruitment-ai:last-sourcing-criteria'
 const maximumAutomaticEnrichments = 5
 
 function parseList(value) {
@@ -62,9 +63,35 @@ function getMatchRecommendation(score) {
   return 'Low Match'
 }
 
-function openGoogleSearch(criteria) {
+function formatAnalysisScore(score) {
+  return Number.isFinite(score) ? `${score}%` : 'Unknown'
+}
+
+function formatProcessingStatus(status, type) {
+  const labels = type === 'enrichment'
+    ? {
+        SUCCEEDED: 'Enrichment: completed',
+        FAILED: 'Enrichment: unavailable',
+        NOT_NEEDED: 'Enrichment: not needed',
+      }
+    : {
+        SUCCEEDED: 'Scoring: completed',
+        FAILED: 'Scoring: unavailable',
+        INSUFFICIENT_EVIDENCE: 'Scoring: insufficient evidence',
+      }
+
+  return labels[status] ?? null
+}
+
+function openGoogleSearch(criteria, searchSessionId) {
+  const searchUrl = new URL(buildGoogleSearchUrl(criteria))
+
+  if (searchSessionId) {
+    searchUrl.searchParams.set('recruitmentSearchSession', searchSessionId)
+  }
+
   const searchLink = document.createElement('a')
-  searchLink.href = buildGoogleSearchUrl(criteria)
+  searchLink.href = searchUrl.href
   searchLink.target = '_blank'
   searchLink.rel = 'noopener noreferrer'
   document.body.append(searchLink)
@@ -107,57 +134,6 @@ function toStoredSourcingCriteria(criteria) {
     location: criteria.location,
     keywords: criteria.keywords,
     excludeKeywords: criteria.excludeKeywords,
-  }
-}
-
-function persistSourcingCriteria(criteria) {
-  try {
-    window.localStorage.setItem(
-      sourcingCriteriaStorageKey,
-      JSON.stringify(toStoredSourcingCriteria(criteria)),
-    )
-  } catch {
-    // The imported candidates can still be shown if browser storage is blocked.
-  }
-}
-
-function readStoredSourcingCriteria() {
-  try {
-    const value = JSON.parse(
-      window.localStorage.getItem(sourcingCriteriaStorageKey),
-    )
-
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return null
-    }
-
-    const textKeys = ['role', 'location']
-    const listKeys = [
-      'requiredSkills',
-      'preferredSkills',
-      'keywords',
-      'excludeKeywords',
-    ]
-
-    if (
-      !textKeys.every((key) => typeof value[key] === 'string') ||
-      !listKeys.every(
-        (key) =>
-          Array.isArray(value[key]) &&
-          value[key].every((item) => typeof item === 'string'),
-      ) ||
-      !['minExperience', 'maxExperience'].every(
-        (key) =>
-          value[key] === undefined ||
-          (Number.isFinite(value[key]) && value[key] >= 0),
-      )
-    ) {
-      return null
-    }
-
-    return toStoredSourcingCriteria(value)
-  } catch {
-    return null
   }
 }
 
@@ -281,6 +257,19 @@ function SearchCandidates() {
   const [linkedinSentStatus, setLinkedinSentStatus] = useState('idle')
   const [activityCandidate, setActivityCandidate] = useState(null)
   const [interviewCandidate, setInterviewCandidate] = useState(null)
+  const [emailDiscoveryCandidate, setEmailDiscoveryCandidate] = useState(null)
+  const [detailsCandidateId, setDetailsCandidateId] = useState(null)
+  const [manualCandidate, setManualCandidate] = useState(null)
+  const [manualProfileText, setManualProfileText] = useState({
+    about: '',
+    workExperience: '',
+    skills: '',
+  })
+  const [manualEmail, setManualEmail] = useState('')
+  const [manualPreview, setManualPreview] = useState(null)
+  const [manualApprovedFields, setManualApprovedFields] = useState([])
+  const [manualStatus, setManualStatus] = useState('idle')
+  const [manualError, setManualError] = useState('')
 
   useEffect(() => {
     const currentUrl = new URL(window.location.href)
@@ -313,8 +302,7 @@ function SearchCandidates() {
         }
 
         const importedResults = sortCandidateResults(result.results ?? [])
-        const sourcingCriteria =
-          readStoredSourcingCriteria() ?? result.criteria ?? null
+        const sourcingCriteria = result.criteria ?? null
         importLoaded = true
 
         setResults(importedResults)
@@ -354,7 +342,7 @@ function SearchCandidates() {
 
           try {
             const enrichmentResponse = await fetch(
-              `${candidatesApiUrl}/enrich-public`,
+              `${candidatesApiUrl}/process-experience`,
               {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -369,6 +357,7 @@ function SearchCandidates() {
                     searchSnippet: candidate.searchSnippet,
                   },
                   importSessionId,
+                  deferScoring: true,
                 }),
                 signal: abortController.signal,
               },
@@ -389,6 +378,9 @@ function SearchCandidates() {
                 enrichmentResult.candidate,
               ]),
             )
+            if (enrichmentResult.experienceStatus === 'INCOMPLETE') {
+              enrichmentFailureCount += 1
+            }
           } catch (error) {
             if (error.name === 'AbortError') {
               throw error
@@ -421,7 +413,7 @@ function SearchCandidates() {
 
         if (enrichmentFailureCount > 0) {
           setImportProcessingNotice(
-            `${enrichmentFailureCount} ${enrichmentFailureCount === 1 ? 'candidate could' : 'candidates could'} not be enriched. They remain visible and were scored using the available Google information.`,
+            `${enrichmentFailureCount} ${enrichmentFailureCount === 1 ? 'candidate has' : 'candidates have'} incomplete experience. They remain visible and were scored using the available verified information.`,
           )
         }
       } catch (error) {
@@ -468,6 +460,9 @@ function SearchCandidates() {
   const selectedCandidates = results.filter((candidate) =>
     selectedCandidateIds.includes(candidate.id),
   )
+  const detailsCandidate = results.find(
+    (candidate) => candidate.id === detailsCandidateId,
+  ) ?? null
   const selectedImportedCandidates = results.filter(
     (candidate) =>
       !candidate.isSaved &&
@@ -545,8 +540,27 @@ function SearchCandidates() {
     setEnrichmentProgress(null)
 
     if (shouldOpenGoogle) {
-      persistSourcingCriteria(payload)
-      openGoogleSearch(payload)
+      let searchSessionId = null
+
+      try {
+        const sessionResponse = await fetch(
+          `${candidatesApiUrl}/search-sessions`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(toStoredSourcingCriteria(payload)),
+          },
+        )
+        const sessionResult = await sessionResponse.json()
+
+        if (sessionResponse.ok) {
+          searchSessionId = sessionResult.searchSessionId ?? null
+        }
+      } catch {
+        // Google search still opens. Imports from it will remain unscored.
+      }
+
+      openGoogleSearch(payload, searchSessionId)
     }
 
     if (!shouldSearchDatabase) {
@@ -624,7 +638,7 @@ function SearchCandidates() {
 
   async function saveCandidate(candidate, showSuccessMessage = true) {
     if (candidate.isSaved) {
-      return true
+      return result.experienceStatus === 'COMPLETE'
     }
 
     setSavingCandidateIds((currentIds) => [...currentIds, candidate.id])
@@ -717,6 +731,50 @@ function SearchCandidates() {
     })
   }
 
+  async function updateCandidateDetails(candidate, changes) {
+    const requestUrl = candidate.isSaved
+      ? `${candidatesApiUrl}/${encodeURIComponent(candidate.id)}/details`
+      : `${candidatesApiUrl}/import-sessions/${encodeURIComponent(activeImportSessionId)}/candidates/${encodeURIComponent(candidate.id)}/details`
+    if (!candidate.isSaved && !activeImportSessionId) {
+      throw new Error('The temporary candidate session has expired.')
+    }
+    const response = await fetch(requestUrl, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(changes),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.error || 'Unable to update candidate details.')
+    setResults((currentResults) =>
+      sortCandidateResults(currentResults.map((currentCandidate) =>
+        currentCandidate.id === candidate.id
+          ? { ...currentCandidate, ...result.candidate }
+          : currentCandidate,
+      )),
+    )
+    return result.candidate
+  }
+
+  async function rerunCandidateMatching(candidate) {
+    const response = await fetch(`${candidatesApiUrl}/score-one`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        candidate,
+        criteria: toStoredSourcingCriteria(buildSearchPayload()),
+      }),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.error || 'Unable to score candidate.')
+    setResults((currentResults) => sortCandidateResults(
+      currentResults.map((currentCandidate) =>
+        currentCandidate.id === candidate.id
+          ? { ...currentCandidate, ...result.candidate }
+          : currentCandidate,
+      ),
+    ))
+  }
+
   async function enrichCandidate(candidate, showMessage = true) {
     setEnrichingCandidateIds((currentIds) => [
       ...currentIds,
@@ -728,7 +786,7 @@ function SearchCandidates() {
     }
 
     try {
-      const response = await fetch(`${candidatesApiUrl}/enrich-public`, {
+      const response = await fetch(`${candidatesApiUrl}/process-experience`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -759,7 +817,6 @@ function SearchCandidates() {
               ? {
                   ...currentCandidate,
                   ...result.candidate,
-                  enrichment: result.enrichment,
                   source: currentCandidate.source,
                   isSaved: currentCandidate.isSaved,
                   notes: currentCandidate.notes,
@@ -771,12 +828,16 @@ function SearchCandidates() {
 
       if (showMessage) {
         setActionMessage({
-          type: 'success',
-          text: `${candidate.fullName} enriched from public professional sources.`,
+          type:
+            result.experienceStatus === 'COMPLETE' ? 'success' : 'error',
+          text:
+            result.experienceStatus === 'COMPLETE'
+              ? `${candidate.fullName}'s experience was completed.`
+              : `Experience remains incomplete for ${candidate.fullName}. Add profile details to complete it.`,
         })
       }
 
-      return true
+      return result.experienceStatus === 'COMPLETE'
     } catch (error) {
       if (showMessage) {
         setActionMessage({
@@ -802,7 +863,7 @@ function SearchCandidates() {
 
     setIsBulkEnriching(true)
     setActionMessage(null)
-    let enrichedCount = 0
+    let completedCount = 0
 
     for (const [index, candidate] of candidatesToEnrich.entries()) {
       setEnrichmentProgress({
@@ -811,7 +872,7 @@ function SearchCandidates() {
       })
 
       if (await enrichCandidate(candidate, false)) {
-        enrichedCount += 1
+        completedCount += 1
       }
     }
 
@@ -819,12 +880,140 @@ function SearchCandidates() {
     setEnrichmentProgress(null)
     setActionMessage({
       type:
-        enrichedCount === candidatesToEnrich.length ? 'success' : 'error',
+        completedCount === candidatesToEnrich.length ? 'success' : 'error',
       text:
-        enrichedCount === candidatesToEnrich.length
-          ? `${enrichedCount} ${enrichedCount === 1 ? 'candidate' : 'candidates'} enriched successfully.`
-          : `${enrichedCount} of ${candidatesToEnrich.length} candidates enriched.`,
+        completedCount === candidatesToEnrich.length
+          ? `${completedCount} ${completedCount === 1 ? 'candidate has' : 'candidates have'} complete experience.`
+          : `${completedCount} of ${candidatesToEnrich.length} candidates have complete experience.`,
     })
+  }
+
+  function openManualEnrichment(candidate) {
+    setManualCandidate(candidate)
+    setManualProfileText({ about: '', workExperience: '', skills: '' })
+    setManualEmail(candidate.email ?? '')
+    setManualPreview(null)
+    setManualApprovedFields([])
+    setManualStatus('idle')
+    setManualError('')
+  }
+
+  function closeManualEnrichment() {
+    setManualCandidate(null)
+    setManualPreview(null)
+    setManualStatus('idle')
+    setManualError('')
+  }
+
+  async function previewManualEnrichment() {
+    setManualStatus('extracting')
+    setManualError('')
+
+    try {
+      const response = await fetch(`${candidatesApiUrl}/enrich-manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'preview',
+          candidate: {
+            id: manualCandidate.id,
+            fullName: manualCandidate.fullName,
+            currentTitle: manualCandidate.currentTitle ?? null,
+            currentCompany: manualCandidate.currentCompany ?? null,
+            location: manualCandidate.location ?? null,
+            yearsOfExperience: manualCandidate.yearsOfExperience ?? null,
+            skills: manualCandidate.skills ?? [],
+            summary: manualCandidate.summary ?? null,
+            email: manualCandidate.email ?? null,
+            linkedinUrl: manualCandidate.linkedinUrl ?? null,
+            isSaved: Boolean(manualCandidate.isSaved),
+            source: manualCandidate.source ?? null,
+          },
+          profileText: manualProfileText,
+          email: manualEmail,
+          criteria: toStoredSourcingCriteria(buildSearchPayload()),
+          ...(!manualCandidate.isSaved && activeImportSessionId
+            ? { importSessionId: activeImportSessionId }
+            : {}),
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Unable to extract profile details.')
+
+      const fields = [
+        'currentTitle',
+        'currentCompany',
+        'location',
+        'skills',
+        'summary',
+        'employmentHistory',
+        'yearsOfExperience',
+        'email',
+      ]
+      const useful = (value) => Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== ''
+      setManualPreview(result)
+      setManualApprovedFields(
+        fields.filter((field) =>
+          useful(result.extracted[field]) &&
+          (!useful(result.candidate[field]) || field === 'skills' || field === 'employmentHistory'),
+        ),
+      )
+      setManualStatus('preview')
+    } catch (error) {
+      setManualError(error.message || 'Unable to extract profile details.')
+      setManualStatus('error')
+    }
+  }
+
+  function toggleManualField(field) {
+    setManualApprovedFields((fields) =>
+      fields.includes(field)
+        ? fields.filter((current) => current !== field)
+        : [...fields, field],
+    )
+  }
+
+  async function confirmManualEnrichment() {
+    setManualStatus('confirming')
+    setManualError('')
+
+    try {
+      const response = await fetch(`${candidatesApiUrl}/enrich-manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'confirm',
+          previewId: manualPreview.previewId,
+          approvedFields: manualApprovedFields,
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Unable to apply profile details.')
+
+      setResults((currentResults) =>
+        sortCandidateResults(
+          currentResults.map((candidate) =>
+            candidate.id === manualCandidate.id
+              ? {
+                  ...candidate,
+                  ...result.candidate,
+                  source: candidate.source,
+                  isSaved: candidate.isSaved,
+                  notes: candidate.notes,
+                }
+              : candidate,
+          ),
+        ),
+      )
+      setActionMessage({
+        type: 'success',
+        text: `${manualCandidate.fullName}'s approved profile details were applied.`,
+      })
+      closeManualEnrichment()
+    } catch (error) {
+      setManualError(error.message || 'Unable to apply profile details.')
+      setManualStatus('error')
+    }
   }
 
   async function exportCandidates(candidates, target) {
@@ -1335,7 +1524,7 @@ function SearchCandidates() {
             <div className="bulk-save-actions">
               <button
                 type="button"
-                title="Enrich up to 5 selected imported candidates"
+                title="Process experience for up to 5 selected imported candidates"
                 onClick={() => enrichCandidates(selectedImportedCandidates)}
                 disabled={
                   selectedImportedCandidates.length === 0 ||
@@ -1343,7 +1532,7 @@ function SearchCandidates() {
                   isBulkSaving
                 }
               >
-                Enrich Selected
+                Process Experience
               </button>
               <button
                 type="button"
@@ -1402,7 +1591,7 @@ function SearchCandidates() {
 
           {enrichmentProgress && (
             <p className="enrichment-progress" role="status">
-              Enriching {enrichmentProgress.current} of{' '}
+              Processing experience {enrichmentProgress.current} of{' '}
               {enrichmentProgress.total}...
             </p>
           )}
@@ -1453,6 +1642,14 @@ function SearchCandidates() {
                     !candidate.isSaved &&
                     candidate.source === 'google-linkedin' &&
                     Boolean(candidate.linkedinUrl)
+                  const enrichmentLabel = formatProcessingStatus(
+                    candidate.enrichmentStatus,
+                    'enrichment',
+                  )
+                  const scoringLabel = formatProcessingStatus(
+                    candidate.scoringStatus,
+                    'scoring',
+                  )
 
                   return (
                     <Fragment key={candidate.id}>
@@ -1477,6 +1674,12 @@ function SearchCandidates() {
                           <strong>{candidate.fullName}</strong>
                           {candidate.enrichment?.enriched && (
                             <span className="enriched-badge">Enriched</span>
+                          )}
+                          {(enrichmentLabel || scoringLabel) && (
+                            <span className="candidate-processing-statuses">
+                              {enrichmentLabel && <span>{enrichmentLabel}</span>}
+                              {scoringLabel && <span>{scoringLabel}</span>}
+                            </span>
                           )}
                         </td>
                         <td>{candidate.currentTitle || '-'}</td>
@@ -1505,7 +1708,12 @@ function SearchCandidates() {
                         <td>
                           <div className="candidate-match-cell">
                             {!Number.isFinite(candidate.matchScore) ? (
-                              <span>Score unavailable</span>
+                              <span>
+                                {candidate.matchError ===
+                                'Insufficient information'
+                                  ? 'Insufficient information'
+                                  : 'Score unavailable'}
+                              </span>
                             ) : (
                               <strong>
                                 {candidate.matchScore}% —{' '}
@@ -1565,6 +1773,12 @@ function SearchCandidates() {
                         </td>
                         <td>
                           <div className="search-result-actions">
+                            <button
+                              type="button"
+                              onClick={() => setDetailsCandidateId(candidate.id)}
+                            >
+                              View Details
+                            </button>
                             {candidate.linkedinUrl ? (
                               <a
                                 href={candidate.linkedinUrl}
@@ -1584,6 +1798,12 @@ function SearchCandidates() {
                               onClick={() => openOutreach(candidate)}
                             >
                               Email
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEmailDiscoveryCandidate(candidate)}
+                            >
+                              Find Email
                             </button>
                             <button
                               type="button"
@@ -1645,9 +1865,20 @@ function SearchCandidates() {
                                 }
                                 onClick={() => enrichCandidate(candidate)}
                               >
-                                {isEnriching ? 'Enriching...' : 'Enrich'}
+                                {isEnriching
+                                  ? 'Processing...'
+                                  : 'Process Experience'}
                               </button>
                             )}
+                            <button
+                              type="button"
+                              className="manual-enrich-button"
+                              onClick={() => openManualEnrichment(candidate)}
+                            >
+                              {candidate.experienceStatus === 'INCOMPLETE'
+                                ? 'Complete Experience'
+                                : 'Add Profile Details'}
+                            </button>
                             <button
                               type="button"
                               className="save-candidate-button"
@@ -1680,25 +1911,47 @@ function SearchCandidates() {
                                 <div>
                                   <dt>Required Skills Score</dt>
                                   <dd>
-                                    {candidate.matchAnalysis.requiredSkillsScore}%
+                                    {formatAnalysisScore(
+                                      candidate.matchAnalysis.requiredSkillsScore,
+                                    )}
                                   </dd>
                                 </div>
                                 <div>
                                   <dt>Preferred Skills Score</dt>
                                   <dd>
-                                    {candidate.matchAnalysis.preferredSkillsScore}%
+                                    {formatAnalysisScore(
+                                      candidate.matchAnalysis.preferredSkillsScore,
+                                    )}
                                   </dd>
                                 </div>
                                 <div>
                                   <dt>Experience Score</dt>
                                   <dd>
-                                    {candidate.matchAnalysis.experienceScore}%
+                                    {formatAnalysisScore(
+                                      candidate.matchAnalysis.experienceScore,
+                                    )}
                                   </dd>
                                 </div>
                                 <div>
                                   <dt>Role Score</dt>
-                                  <dd>{candidate.matchAnalysis.roleScore}%</dd>
+                                  <dd>
+                                    {formatAnalysisScore(
+                                      candidate.matchAnalysis.roleScore,
+                                    )}
+                                  </dd>
                                 </div>
+                                {candidate.matchAnalysis.evidenceCoverage && (
+                                  <div>
+                                    <dt>Evidence Coverage</dt>
+                                    <dd>
+                                      {
+                                        candidate.matchAnalysis
+                                          .evidenceCoverage.percentage
+                                      }
+                                      %
+                                    </dd>
+                                  </div>
+                                )}
                               </dl>
 
                               <div className="sourcing-analysis-grid">
@@ -1711,7 +1964,7 @@ function SearchCandidates() {
                                   </p>
                                 </section>
                                 <section>
-                                  <h4>Missing Skills</h4>
+                                  <h4>Required skills without evidence</h4>
                                   <p>
                                     {candidate.matchAnalysis.missingSkills.join(
                                       ', ',
@@ -1755,6 +2008,145 @@ function SearchCandidates() {
             </table>
           </div>
         </section>
+      )}
+
+      {manualCandidate && (
+        <div className="outreach-backdrop">
+          <section
+            className="outreach-panel manual-enrichment-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manual-enrichment-title"
+          >
+            <div className="outreach-heading">
+              <div>
+                <h3 id="manual-enrichment-title">Add Profile Details</h3>
+                <p>
+                  Paste professional information for {manualCandidate.fullName}.
+                  Nothing changes until you confirm the preview.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="outreach-close"
+                aria-label="Close profile details"
+                onClick={closeManualEnrichment}
+              >
+                ×
+              </button>
+            </div>
+
+            {!manualPreview && (
+              <>
+                <label className="outreach-field">
+                  Email
+                  <input
+                    type="email"
+                    value={manualEmail}
+                    placeholder="candidate@example.com"
+                    onChange={(event) => setManualEmail(event.target.value)}
+                  />
+                </label>
+                <label className="outreach-field">
+                  About / Professional Summary
+                  <textarea
+                    rows="5"
+                    value={manualProfileText.about}
+                    onChange={(event) =>
+                      setManualProfileText((current) => ({ ...current, about: event.target.value }))
+                    }
+                  />
+                </label>
+                <label className="outreach-field">
+                  Work Experience
+                  <textarea
+                    rows="8"
+                    value={manualProfileText.workExperience}
+                    onChange={(event) =>
+                      setManualProfileText((current) => ({ ...current, workExperience: event.target.value }))
+                    }
+                  />
+                </label>
+                <label className="outreach-field">
+                  Skills / Technologies
+                  <textarea
+                    rows="5"
+                    value={manualProfileText.skills}
+                    onChange={(event) =>
+                      setManualProfileText((current) => ({ ...current, skills: event.target.value }))
+                    }
+                  />
+                </label>
+              </>
+            )}
+
+            {manualPreview && (
+              <div className="manual-preview">
+                <h4>Review extracted details</h4>
+                <p>Select every field you approve. Existing values are not selected for replacement automatically.</p>
+                {[
+                  ['currentTitle', 'Current title'],
+                  ['currentCompany', 'Current company'],
+                  ['location', 'Location'],
+                  ['skills', 'Skills'],
+                  ['summary', 'Professional summary'],
+                  ['employmentHistory', 'Employment history'],
+                  ['yearsOfExperience', 'Total experience'],
+                  ['email', 'Email'],
+                ].map(([field, label]) => {
+                  const value = manualPreview.extracted[field]
+                  const displayValue = Array.isArray(value)
+                    ? value.map((item) => typeof item === 'string'
+                      ? item
+                      : `${item.jobTitle} at ${item.company} (${item.startDate} – ${item.endDate})`).join(', ')
+                    : value
+                  if (displayValue === null || displayValue === '' || displayValue === undefined || displayValue.length === 0) return null
+                  const replacesExisting = manualPreview.replacementFields.includes(field)
+                  return (
+                    <label className="manual-preview-field" key={field}>
+                      <input
+                        type="checkbox"
+                        checked={manualApprovedFields.includes(field)}
+                        onChange={() => toggleManualField(field)}
+                      />
+                      <span>
+                        <strong>{label}{replacesExisting ? ' (replaces existing value)' : ''}</strong>
+                        <small>{String(displayValue)}</small>
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+
+            {manualError && (
+              <p className="outreach-message error" role="alert">{manualError}</p>
+            )}
+
+            <div className="outreach-actions">
+              {!manualPreview ? (
+                <button
+                  type="button"
+                  className="outreach-generate"
+                  disabled={manualStatus === 'extracting'}
+                  onClick={previewManualEnrichment}
+                >
+                  {manualStatus === 'extracting' ? 'Extracting...' : 'Preview Details'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="outreach-generate"
+                  disabled={manualStatus === 'confirming' || manualApprovedFields.length === 0}
+                  onClick={confirmManualEnrichment}
+                >
+                  {manualStatus === 'confirming' ? 'Applying...' : 'Confirm Changes'}
+                </button>
+              )}
+              <button type="button" onClick={closeManualEnrichment}>Cancel</button>
+            </div>
+          </section>
+        </div>
       )}
 
       {outreachCandidate && (
@@ -2057,6 +2449,27 @@ function SearchCandidates() {
         />
       )}
 
+      {detailsCandidate && (
+        <CandidateDetailsPanel
+          candidate={detailsCandidate}
+          actions={{
+            onSaveDetails: updateCandidateDetails,
+            onRerunMatching: rerunCandidateMatching,
+            onAddProfileDetails: openManualEnrichment,
+            onEnrich: enrichCandidate,
+            onFindEmail: setEmailDiscoveryCandidate,
+            onSave: saveCandidate,
+            onEmail: openOutreach,
+            onLinkedInMessage: (candidate) =>
+              openLinkedInOutreach(candidate, 'linkedin-message'),
+            onConnect: (candidate) =>
+              openLinkedInOutreach(candidate, 'linkedin-connect'),
+            onInviteInterview: setInterviewCandidate,
+          }}
+          onClose={() => setDetailsCandidateId(null)}
+        />
+      )}
+
       {interviewCandidate && (
         <InterviewInvitationModal
           candidate={interviewCandidate}
@@ -2079,6 +2492,31 @@ function SearchCandidates() {
             }))
           }}
           onClose={() => setInterviewCandidate(null)}
+        />
+      )}
+
+      {emailDiscoveryCandidate && (
+        <CandidateEmailDiscoveryModal
+          candidate={emailDiscoveryCandidate}
+          importSessionId={
+            emailDiscoveryCandidate.isSaved ? undefined : activeImportSessionId
+          }
+          onConfirmed={(updatedCandidate) => {
+            setResults((currentResults) =>
+              sortCandidateResults(
+                currentResults.map((candidate) =>
+                  candidate.id === emailDiscoveryCandidate.id
+                    ? { ...candidate, ...updatedCandidate }
+                    : candidate,
+                ),
+              ),
+            )
+            setActionMessage({
+              type: 'success',
+              text: 'Professional email confirmed.',
+            })
+          }}
+          onClose={() => setEmailDiscoveryCandidate(null)}
         />
       )}
     </section>

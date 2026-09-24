@@ -43,9 +43,16 @@ import {
 import {
   CandidateEnrichmentNotFoundError,
   CandidateEnrichmentUnavailableError,
+  enrichManualCandidate,
   enrichPublicCandidate,
+  discoverCandidateEmail,
 } from './services/candidateEnrichmentService.js'
-import { searchCandidates } from './services/candidateSearchService.js'
+import {
+  analyzeCandidateResults,
+  searchCandidates,
+  validateCandidateSearchCriteria,
+} from './services/candidateSearchService.js'
+import { createCandidateSearchSession } from './services/candidateSearchSessionService.js'
 import {
   CandidateSourceConfigurationError,
   CandidateSourceRequestError,
@@ -70,6 +77,11 @@ import {
   extractResumeText,
   ResumeParserError,
 } from './services/resumeParser.js'
+import { processCandidateExperience } from './services/candidateExperienceService.js'
+import {
+  updateSavedCandidateDetails,
+  updateTemporaryCandidateDetails,
+} from './services/candidateDetailsService.js'
 
 const app = express()
 const port = 3000
@@ -591,6 +603,27 @@ app.post('/api/candidates/export', async (request, response) => {
 })
 
 app.post(
+  '/api/candidates/search-sessions',
+  (request, response) => {
+    try {
+      const criteria = validateCandidateSearchCriteria(request.body)
+      const searchSession = createCandidateSearchSession(criteria)
+
+      response.status(201).json({
+        success: true,
+        searchSessionId: searchSession.id,
+      })
+    } catch (error) {
+      handleCandidateApiError(
+        error,
+        response,
+        'Unable to create candidate search session.',
+      )
+    }
+  },
+)
+
+app.post(
   '/api/candidates/import-search-results',
   async (request, response) => {
     try {
@@ -718,6 +751,94 @@ app.post('/api/candidates/enrich-public', async (request, response) => {
   }
 })
 
+app.post('/api/candidates/process-experience', async (request, response) => {
+  try {
+    const result = await processCandidateExperience(request.body)
+    response.json({ success: true, ...result })
+  } catch (error) {
+    if (error instanceof ImportSessionNotFoundError) {
+      response.status(404).json({ success: false, error: error.message })
+      return
+    }
+
+    handleCandidateApiError(
+      error,
+      response,
+      'Unable to process candidate experience.',
+    )
+  }
+})
+
+app.post(
+  '/api/candidates/import-sessions/:id/linkedin-experience',
+  async (request, response) => {
+    try {
+      const candidate = request.body?.candidate ?? {}
+      const result = await processCandidateExperience({
+        candidate: {
+          id: candidate.id || candidate.linkedinUrl,
+          fullName: candidate.fullName,
+          linkedinUrl: candidate.linkedinUrl,
+        },
+        existingEmploymentEvidence: candidate.employmentHistory,
+        importSessionId: request.params.id,
+      })
+      response.json({ success: true, ...result })
+    } catch (error) {
+      if (error instanceof ImportSessionNotFoundError) {
+        response.status(404).json({ success: false, error: error.message })
+        return
+      }
+      handleCandidateApiError(
+        error,
+        response,
+        'Unable to import LinkedIn experience.',
+      )
+    }
+  },
+)
+
+app.post('/api/candidates/enrich-manual', async (request, response) => {
+  try {
+    const result = await enrichManualCandidate(request.body)
+    response.json({ success: true, ...result })
+  } catch (error) {
+    if (
+      error instanceof CandidateEnrichmentNotFoundError ||
+      error instanceof ImportSessionNotFoundError
+    ) {
+      response.status(404).json({ success: false, error: error.message })
+      return
+    }
+
+    handleCandidateApiError(
+      error,
+      response,
+      'Unable to enrich candidate from pasted profile details.',
+    )
+  }
+})
+
+app.post('/api/candidates/find-email', async (request, response) => {
+  try {
+    const result = await discoverCandidateEmail(request.body)
+    response.json({ success: true, ...result })
+  } catch (error) {
+    if (
+      error instanceof CandidateEnrichmentNotFoundError ||
+      error instanceof ImportSessionNotFoundError
+    ) {
+      response.status(404).json({ success: false, error: error.message })
+      return
+    }
+    if (error instanceof CandidateEnrichmentUnavailableError) {
+      response.status(404).json({ success: false, error: error.message })
+      return
+    }
+    handleCandidateApiError(error, response, 'Unable to find a professional email.')
+  }
+})
+
 app.get('/api/candidates', async (request, response) => {
   try {
     const candidates = await listCandidates(request.query)
@@ -762,6 +883,47 @@ app.patch('/api/candidates/:id', async (request, response) => {
     response.json({ success: true, candidate })
   } catch (error) {
     handleCandidateApiError(error, response, 'Unable to update candidate.')
+  }
+})
+
+app.patch('/api/candidates/:id/details', async (request, response) => {
+  try {
+    const candidate = await updateSavedCandidateDetails(
+      request.params.id,
+      request.body,
+    )
+    response.json({ success: true, candidate })
+  } catch (error) {
+    handleCandidateApiError(error, response, 'Unable to update candidate details.')
+  }
+})
+
+app.patch(
+  '/api/candidates/import-sessions/:sessionId/candidates/:candidateId/details',
+  (request, response) => {
+    try {
+      const candidate = updateTemporaryCandidateDetails(
+        request.params.sessionId,
+        request.params.candidateId,
+        request.body,
+      )
+      response.json({ success: true, candidate })
+    } catch (error) {
+      handleCandidateApiError(error, response, 'Unable to update candidate details.')
+    }
+  },
+)
+
+app.post('/api/candidates/score-one', async (request, response) => {
+  try {
+    const criteria = validateCandidateSearchCriteria(request.body?.criteria)
+    const [candidate] = await analyzeCandidateResults(
+      [request.body?.candidate],
+      criteria,
+    )
+    response.json({ success: true, candidate })
+  } catch (error) {
+    handleCandidateApiError(error, response, 'Unable to score candidate.')
   }
 })
 
