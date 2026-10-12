@@ -45,14 +45,15 @@ function formatInterviewDate(metadata) {
   return `${dateLabel}, ${metadata.time} (${metadata.timezone})`
 }
 
-function CandidateActivityPanel({ candidate, onClose }) {
+function CandidateActivityPanel({ candidate, projectId = null, onClose }) {
   const [loadStatus, setLoadStatus] = useState('loading')
   const [activities, setActivities] = useState([])
 
   useEffect(() => {
     const controller = new AbortController()
 
-    fetch(`${candidatesApiUrl}/${candidate.id}/activities`, {
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
+    fetch(`${candidatesApiUrl}/${candidate.id}/activities${query}`, {
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -75,7 +76,7 @@ function CandidateActivityPanel({ candidate, onClose }) {
       })
 
     return () => controller.abort()
-  }, [candidate.id])
+  }, [candidate.id, projectId])
 
   return (
     <div className="outreach-backdrop">
@@ -122,6 +123,7 @@ function CandidateActivityPanel({ candidate, onClose }) {
                 </time>
                 <strong>{getActivityLabel(activity)}</strong>
                 {activity.channel && <span>{activity.channel}</span>}
+                {activity.jobId && <span>Project activity</span>}
                 {activity.type === 'INTERVIEW_INVITED' && (
                   <div className="activity-interview-details">
                     <b>{activity.metadata.interviewTitle}</b>

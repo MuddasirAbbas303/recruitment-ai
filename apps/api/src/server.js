@@ -82,6 +82,17 @@ import {
   updateSavedCandidateDetails,
   updateTemporaryCandidateDetails,
 } from './services/candidateDetailsService.js'
+import {
+  analyzeProjectCandidate,
+  assignCandidatesToProjects,
+  createProject,
+  getProjectBoard,
+  listProjects,
+  moveProjectCandidate,
+  RecruitmentProjectNotFoundError,
+  RecruitmentProjectValidationError,
+  updateProject,
+} from './services/recruitmentProjectService.js'
 
 const app = express()
 const port = 3000
@@ -92,6 +103,19 @@ const allowedFileTypes = {
   '.pdf': 'application/pdf',
   '.docx':
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+}
+
+function handleProjectError(error, response) {
+  if (error instanceof RecruitmentProjectValidationError) {
+    response.status(400).json({ success: false, error: error.message })
+    return
+  }
+  if (error instanceof RecruitmentProjectNotFoundError) {
+    response.status(404).json({ success: false, error: error.message })
+    return
+  }
+  console.error('Recruitment project request failed.', { errorType: error?.constructor?.name })
+  response.status(500).json({ success: false, error: 'Unable to complete recruitment project request.' })
 }
 
 function sanitizeFilename(originalName) {
@@ -287,6 +311,54 @@ function sendHealthResponse(_request, response) {
 
 app.get('/health', sendHealthResponse)
 app.get('/api/health', sendHealthResponse)
+
+app.get('/api/projects', async (request, response) => {
+  try {
+    const projects = await listProjects({ activeOnly: request.query.status === 'ACTIVE' })
+    response.json({ success: true, projects })
+  } catch (error) { handleProjectError(error, response) }
+})
+
+app.post('/api/projects', async (request, response) => {
+  try {
+    const project = await createProject(request.body)
+    response.status(201).json({ success: true, project })
+  } catch (error) { handleProjectError(error, response) }
+})
+
+app.patch('/api/projects/:id', async (request, response) => {
+  try {
+    const project = await updateProject(request.params.id, request.body)
+    response.json({ success: true, project })
+  } catch (error) { handleProjectError(error, response) }
+})
+
+app.get('/api/projects/:id/board', async (request, response) => {
+  try {
+    response.json({ success: true, ...(await getProjectBoard(request.params.id)) })
+  } catch (error) { handleProjectError(error, response) }
+})
+
+app.post('/api/projects/assign-candidates', async (request, response) => {
+  try {
+    const result = await assignCandidatesToProjects(request.body)
+    response.json({ success: true, ...result })
+  } catch (error) { handleProjectError(error, response) }
+})
+
+app.patch('/api/projects/:projectId/candidates/:linkId/status', async (request, response) => {
+  try {
+    const link = await moveProjectCandidate(request.params.projectId, request.params.linkId, request.body?.status)
+    response.json({ success: true, link })
+  } catch (error) { handleProjectError(error, response) }
+})
+
+app.post('/api/projects/:projectId/candidates/:linkId/analyze', async (request, response) => {
+  try {
+    const link = await analyzeProjectCandidate(request.params.projectId, request.params.linkId)
+    response.json({ success: true, link })
+  } catch (error) { handleProjectError(error, response) }
+})
 
 function handleCandidateApiError(error, response, fallbackMessage) {
   if (error instanceof AIConfigurationError) {
@@ -850,7 +922,7 @@ app.get('/api/candidates', async (request, response) => {
 
 app.get('/api/candidates/:id/activities', async (request, response) => {
   try {
-    const activities = await listCandidateActivities(request.params.id)
+    const activities = await listCandidateActivities(request.params.id, request.query.projectId)
     response.json({ success: true, activities })
   } catch (error) {
     handleCandidateApiError(

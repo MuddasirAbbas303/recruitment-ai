@@ -1,6 +1,7 @@
 import { DataTypes, Model } from 'sequelize'
 import database from '../config/database.js'
 import Candidate from './Candidate.js'
+import Job from './Job.js'
 
 export const candidateActivityTypes = [
   'EMAIL_SENT',
@@ -28,6 +29,11 @@ CandidateActivity.init(
         model: Candidate,
         key: 'id',
       },
+    },
+    jobId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: Job, key: 'id' },
     },
     type: {
       type: DataTypes.STRING,
@@ -72,5 +78,7 @@ CandidateActivity.belongsTo(Candidate, {
   as: 'candidate',
   foreignKey: 'candidateId',
 })
+Job.hasMany(CandidateActivity, { as: 'activities', foreignKey: 'jobId' })
+CandidateActivity.belongsTo(Job, { as: 'job', foreignKey: 'jobId' })
 
 export default CandidateActivity

@@ -7,7 +7,11 @@ import CandidateActivityPanel from './CandidateActivityPanel.jsx'
 import CandidateDetailsPanel from './CandidateDetailsPanel.jsx'
 import CandidateEmailDiscoveryModal from './CandidateEmailDiscoveryModal.jsx'
 import InterviewInvitationModal from './InterviewInvitationModal.jsx'
+import ProjectAssignmentModal from './ProjectAssignmentModal.jsx'
 import { candidatesApiUrl } from '../config/api.js'
+import { openGmailCompose } from '../utils/email.js'
+import LoadingLabel from './LoadingLabel.jsx'
+import { useLoadingActions } from '../hooks/useLoadingActions.js'
 const initialSearch = {
   role: '',
   requiredSkills: '',
@@ -215,18 +219,30 @@ function getExportFilename(contentDisposition) {
   return filename?.trim() || 'recruitment-candidates.xlsx'
 }
 
-function buildMailtoUrl(email, subject, body) {
-  return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+function projectSearch(project) {
+  if (!project) return initialSearch
+  return {
+    ...initialSearch,
+    role: project.title ?? '',
+    requiredSkills: (project.requiredSkills ?? []).join(', '),
+    preferredSkills: (project.preferredSkills ?? []).join(', '),
+    minExperience: project.minimumExperience ?? '',
+    maxExperience: project.maximumExperience ?? '',
+    location: project.location ?? '',
+    keywords: (project.keywords ?? []).join(', '),
+    excludeKeywords: (project.excludeKeywords ?? []).join(', '),
+  }
 }
 
-function SearchCandidates() {
-  const [search, setSearch] = useState(initialSearch)
+function SearchCandidates({ originatingProject = null, onBackToProject = null, onOpenProject = null }) {
+  const [search, setSearch] = useState(() => projectSearch(originatingProject))
   const [searchStatus, setSearchStatus] = useState('idle')
   const [results, setResults] = useState([])
   const [selectedCandidateIds, setSelectedCandidateIds] = useState([])
   const [savingCandidateIds, setSavingCandidateIds] = useState([])
   const [savingNotesIds, setSavingNotesIds] = useState([])
   const [isBulkSaving, setIsBulkSaving] = useState(false)
+  const [bulkSaveProgress, setBulkSaveProgress] = useState(null)
   const [actionMessage, setActionMessage] = useState(null)
   const [expandedAnalysisId, setExpandedAnalysisId] = useState(null)
   const [externalSearchOpened, setExternalSearchOpened] = useState(false)
@@ -248,6 +264,8 @@ function SearchCandidates() {
   const [outreachBody, setOutreachBody] = useState('')
   const [outreachStatus, setOutreachStatus] = useState('idle')
   const [emailSentStatus, setEmailSentStatus] = useState('idle')
+  const [gmailOpenError, setGmailOpenError] = useState(false)
+  const loadingActions = useLoadingActions()
   const [linkedinOutreachCandidate, setLinkedinOutreachCandidate] =
     useState(null)
   const [linkedinOutreachType, setLinkedinOutreachType] = useState(null)
@@ -270,6 +288,12 @@ function SearchCandidates() {
   const [manualApprovedFields, setManualApprovedFields] = useState([])
   const [manualStatus, setManualStatus] = useState('idle')
   const [manualError, setManualError] = useState('')
+  const [projectAssignmentCandidates, setProjectAssignmentCandidates] = useState(null)
+  const [assignedProjects, setAssignedProjects] = useState([])
+
+  useEffect(() => {
+    if (originatingProject) setSearch(projectSearch(originatingProject))
+  }, [originatingProject])
 
   useEffect(() => {
     const currentUrl = new URL(window.location.href)
@@ -638,8 +662,11 @@ function SearchCandidates() {
 
   async function saveCandidate(candidate, showSuccessMessage = true) {
     if (candidate.isSaved) {
-      return result.experienceStatus === 'COMPLETE'
+      return true
     }
+
+    const actionKey = `${candidate.id}:save`
+    if (!loadingActions.begin(actionKey)) return false
 
     setSavingCandidateIds((currentIds) => [...currentIds, candidate.id])
 
@@ -704,6 +731,7 @@ function SearchCandidates() {
 
       return false
     } finally {
+      loadingActions.end(actionKey)
       setSavingCandidateIds((currentIds) =>
         currentIds.filter((candidateId) => candidateId !== candidate.id),
       )
@@ -711,17 +739,20 @@ function SearchCandidates() {
   }
 
   async function saveCandidates(candidates) {
+    if (isBulkSaving) return
     setIsBulkSaving(true)
     setActionMessage(null)
     let savedCount = 0
 
-    for (const candidate of candidates) {
+    for (const [index, candidate] of candidates.entries()) {
+      setBulkSaveProgress({ current: index + 1, total: candidates.length })
       if (await saveCandidate(candidate, false)) {
         savedCount += 1
       }
     }
 
     setIsBulkSaving(false)
+    setBulkSaveProgress(null)
     setActionMessage({
       type: savedCount === candidates.length ? 'success' : 'error',
       text:
@@ -756,26 +787,36 @@ function SearchCandidates() {
   }
 
   async function rerunCandidateMatching(candidate) {
-    const response = await fetch(`${candidatesApiUrl}/score-one`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        candidate,
-        criteria: toStoredSourcingCriteria(buildSearchPayload()),
-      }),
-    })
-    const result = await response.json()
-    if (!response.ok) throw new Error(result.error || 'Unable to score candidate.')
-    setResults((currentResults) => sortCandidateResults(
-      currentResults.map((currentCandidate) =>
-        currentCandidate.id === candidate.id
-          ? { ...currentCandidate, ...result.candidate }
-          : currentCandidate,
-      ),
-    ))
+    try {
+      const outcome = await loadingActions.run(`${candidate.id}:matching`, async () => {
+      const response = await fetch(`${candidatesApiUrl}/score-one`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidate,
+          criteria: toStoredSourcingCriteria(buildSearchPayload()),
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Unable to score candidate.')
+      setResults((currentResults) => sortCandidateResults(
+        currentResults.map((currentCandidate) =>
+          currentCandidate.id === candidate.id
+            ? { ...currentCandidate, ...result.candidate }
+            : currentCandidate,
+        ),
+      ))
+      })
+      return outcome.value
+    } catch (error) {
+      setActionMessage({ type: 'error', text: error.message || 'Unable to score candidate.' })
+      throw error
+    }
   }
 
   async function enrichCandidate(candidate, showMessage = true) {
+    const actionKey = `${candidate.id}:enrich`
+    if (!loadingActions.begin(actionKey)) return false
     setEnrichingCandidateIds((currentIds) => [
       ...currentIds,
       candidate.id,
@@ -848,6 +889,7 @@ function SearchCandidates() {
 
       return false
     } finally {
+      loadingActions.end(actionKey)
       setEnrichingCandidateIds((currentIds) =>
         currentIds.filter((candidateId) => candidateId !== candidate.id),
       )
@@ -857,7 +899,7 @@ function SearchCandidates() {
   async function enrichCandidates(candidates) {
     const candidatesToEnrich = candidates.slice(0, 5)
 
-    if (candidatesToEnrich.length === 0) {
+    if (candidatesToEnrich.length === 0 || isBulkEnriching) {
       return
     }
 
@@ -1071,6 +1113,7 @@ function SearchCandidates() {
     setOutreachBody('')
     setOutreachStatus('idle')
     setEmailSentStatus('idle')
+    setGmailOpenError(false)
   }
 
   function closeOutreach() {
@@ -1079,6 +1122,7 @@ function SearchCandidates() {
     setOutreachBody('')
     setOutreachStatus('idle')
     setEmailSentStatus('idle')
+    setGmailOpenError(false)
   }
 
   async function generateOutreach() {
@@ -1086,6 +1130,8 @@ function SearchCandidates() {
       return
     }
 
+    const actionKey = `${outreachCandidate.id}:generate-email`
+    if (!loadingActions.begin(actionKey)) return
     setOutreachStatus('generating')
 
     try {
@@ -1126,6 +1172,8 @@ function SearchCandidates() {
       setOutreachStatus('success')
     } catch {
       setOutreachStatus('error')
+    } finally {
+      loadingActions.end(actionKey)
     }
   }
 
@@ -1153,6 +1201,8 @@ function SearchCandidates() {
       return
     }
 
+    const actionKey = `${linkedinOutreachCandidate.id}:generate-${linkedinOutreachType}`
+    if (!loadingActions.begin(actionKey)) return
     setLinkedinOutreachStatus('generating')
     setLinkedinCopyStatus('idle')
 
@@ -1197,6 +1247,8 @@ function SearchCandidates() {
       setLinkedinOutreachStatus('success')
     } catch {
       setLinkedinOutreachStatus('error')
+    } finally {
+      loadingActions.end(actionKey)
     }
   }
 
@@ -1294,6 +1346,8 @@ function SearchCandidates() {
       className="candidate-search"
       aria-labelledby="candidate-search-title"
     >
+      {originatingProject && <div className="project-sourcing-context"><div><strong>Sourcing for {originatingProject.title}</strong><span>Adjusting this search will not change the saved project.</span></div><button type="button" onClick={onBackToProject}>Back to Project</button></div>}
+      {assignedProjects.length > 0 && <div className="import-session-banner" role="status"><span>Candidates added successfully.</span><span className="assigned-project-links">{assignedProjects.map((project) => <button type="button" key={project.id} onClick={() => onOpenProject?.(project)}>{project.title} board</button>)}</span></div>}
       <form className="candidate-search-form card" onSubmit={handleSearch}>
         <div className="section-heading">
           <h3 id="candidate-search-title">Search Candidates</h3>
@@ -1524,6 +1578,13 @@ function SearchCandidates() {
             <div className="bulk-save-actions">
               <button
                 type="button"
+                onClick={() => setProjectAssignmentCandidates(selectedCandidates)}
+                disabled={selectedCandidates.length === 0}
+              >
+                Add Selected to Projects
+              </button>
+              <button
+                type="button"
                 title="Process experience for up to 5 selected imported candidates"
                 onClick={() => enrichCandidates(selectedImportedCandidates)}
                 disabled={
@@ -1532,7 +1593,9 @@ function SearchCandidates() {
                   isBulkSaving
                 }
               >
-                Process Experience
+                {isBulkEnriching && enrichmentProgress
+                  ? <LoadingLabel>Enriching {enrichmentProgress.current} of {enrichmentProgress.total}...</LoadingLabel>
+                  : 'Enrich Selected'}
               </button>
               <button
                 type="button"
@@ -1543,7 +1606,9 @@ function SearchCandidates() {
                   isBulkEnriching
                 }
               >
-                Save Selected
+                {isBulkSaving && bulkSaveProgress
+                  ? <LoadingLabel>Saving {bulkSaveProgress.current} of {bulkSaveProgress.total}...</LoadingLabel>
+                  : 'Save Selected'}
               </button>
               <button
                 type="button"
@@ -1554,7 +1619,9 @@ function SearchCandidates() {
                   isBulkEnriching
                 }
               >
-                Save All
+                {isBulkSaving && bulkSaveProgress
+                  ? <LoadingLabel>Saving {bulkSaveProgress.current} of {bulkSaveProgress.total}...</LoadingLabel>
+                  : 'Save All'}
               </button>
               <button
                 type="button"
@@ -1569,7 +1636,7 @@ function SearchCandidates() {
                 }
               >
                 {exportingTarget === 'selected'
-                  ? 'Exporting...'
+                  ? <LoadingLabel>Exporting...</LoadingLabel>
                   : 'Export Selected'}
               </button>
               <button
@@ -1583,7 +1650,7 @@ function SearchCandidates() {
                 }
               >
                 {exportingTarget === 'results'
-                  ? 'Exporting...'
+                  ? <LoadingLabel>Exporting...</LoadingLabel>
                   : 'Export Results'}
               </button>
             </div>
@@ -1779,6 +1846,12 @@ function SearchCandidates() {
                             >
                               View Details
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => setProjectAssignmentCandidates([candidate])}
+                            >
+                              Add to Project
+                            </button>
                             {candidate.linkedinUrl ? (
                               <a
                                 href={candidate.linkedinUrl}
@@ -1866,7 +1939,7 @@ function SearchCandidates() {
                                 onClick={() => enrichCandidate(candidate)}
                               >
                                 {isEnriching
-                                  ? 'Processing...'
+                                  ? <LoadingLabel>Enriching...</LoadingLabel>
                                   : 'Process Experience'}
                               </button>
                             )}
@@ -1894,7 +1967,7 @@ function SearchCandidates() {
                               {candidate.isSaved
                                 ? 'Saved'
                                 : isSaving
-                                  ? 'Saving...'
+                                  ? <LoadingLabel>Saving...</LoadingLabel>
                                   : 'Save Candidate'}
                             </button>
                           </div>
@@ -2131,7 +2204,7 @@ function SearchCandidates() {
                   disabled={manualStatus === 'extracting'}
                   onClick={previewManualEnrichment}
                 >
-                  {manualStatus === 'extracting' ? 'Extracting...' : 'Preview Details'}
+                  {manualStatus === 'extracting' ? <LoadingLabel>Extracting...</LoadingLabel> : 'Preview Details'}
                 </button>
               ) : (
                 <button
@@ -2140,7 +2213,7 @@ function SearchCandidates() {
                   disabled={manualStatus === 'confirming' || manualApprovedFields.length === 0}
                   onClick={confirmManualEnrichment}
                 >
-                  {manualStatus === 'confirming' ? 'Applying...' : 'Confirm Changes'}
+                  {manualStatus === 'confirming' ? <LoadingLabel>Applying...</LoadingLabel> : 'Confirm Changes'}
                 </button>
               )}
               <button type="button" onClick={closeManualEnrichment}>Cancel</button>
@@ -2223,6 +2296,11 @@ function SearchCandidates() {
                 Unable to record email activity.
               </p>
             )}
+            {gmailOpenError && (
+              <p className="outreach-message error" role="alert">
+                Unable to open Gmail. Please allow pop-ups for this site.
+              </p>
+            )}
 
             <div className="outreach-actions">
               <button
@@ -2232,18 +2310,23 @@ function SearchCandidates() {
                 onClick={generateOutreach}
               >
                 {outreachStatus === 'generating'
-                  ? 'Generating...'
+                  ? <LoadingLabel>Generating...</LoadingLabel>
                   : 'Generate with AI'}
               </button>
-              <a
-                href={buildMailtoUrl(
-                  outreachCandidate.email,
-                  outreachSubject,
-                  outreachBody,
-                )}
+              <button
+                type="button"
+                disabled={!outreachCandidate.email}
+                onClick={() => {
+                  const opened = openGmailCompose({
+                    to: outreachCandidate.email,
+                    subject: outreachSubject,
+                    body: outreachBody,
+                  })
+                  setGmailOpenError(!opened)
+                }}
               >
-                Open in Email App
-              </a>
+                Open in Gmail
+              </button>
               <button
                 type="button"
                 title={
@@ -2265,7 +2348,7 @@ function SearchCandidates() {
                 }
               >
                 {emailSentStatus === 'saving'
-                  ? 'Marking...'
+                  ? <LoadingLabel>Marking...</LoadingLabel>
                   : 'Mark as Sent'}
               </button>
               <button type="button" onClick={closeOutreach}>
@@ -2380,7 +2463,7 @@ function SearchCandidates() {
                 onClick={generateLinkedInOutreach}
               >
                 {linkedinOutreachStatus === 'generating'
-                  ? 'Generating...'
+                  ? <LoadingLabel>Generating...</LoadingLabel>
                   : 'Generate with AI'}
               </button>
               {isLinkedinMessageTooLong ? (
@@ -2431,7 +2514,7 @@ function SearchCandidates() {
                 }
               >
                 {linkedinSentStatus === 'saving'
-                  ? 'Marking...'
+                  ? <LoadingLabel>Marking...</LoadingLabel>
                   : 'Mark as Sent'}
               </button>
               <button type="button" onClick={closeLinkedInOutreach}>
@@ -2452,6 +2535,11 @@ function SearchCandidates() {
       {detailsCandidate && (
         <CandidateDetailsPanel
           candidate={detailsCandidate}
+          loadingActions={{
+            enrich: loadingActions.isLoading(`${detailsCandidate.id}:enrich`),
+            save: loadingActions.isLoading(`${detailsCandidate.id}:save`),
+            matching: loadingActions.isLoading(`${detailsCandidate.id}:matching`),
+          }}
           actions={{
             onSaveDetails: updateCandidateDetails,
             onRerunMatching: rerunCandidateMatching,
@@ -2467,6 +2555,21 @@ function SearchCandidates() {
             onInviteInterview: setInterviewCandidate,
           }}
           onClose={() => setDetailsCandidateId(null)}
+        />
+      )}
+
+      {projectAssignmentCandidates && (
+        <ProjectAssignmentModal
+          candidates={projectAssignmentCandidates}
+          originatingProjectId={originatingProject?.id ?? null}
+          onClose={() => setProjectAssignmentCandidates(null)}
+          onAssigned={(_projectIds, projects, savedCandidates) => {
+            const savedByOriginalId = new Map(savedCandidates.map((candidate) => [candidate.originalId, candidate]))
+            setResults((currentResults) => currentResults.map((candidate) => savedByOriginalId.has(candidate.id) ? { ...candidate, id: savedByOriginalId.get(candidate.id).id, isSaved: true } : candidate))
+            setSelectedCandidateIds((currentIds) => currentIds.filter((id) => !savedByOriginalId.has(id)))
+            setAssignedProjects(projects)
+            setProjectAssignmentCandidates(null)
+          }}
         />
       )}
 

@@ -5,6 +5,7 @@ import {
   createCandidateDetailsDraft,
   formatEmploymentDuration,
 } from '../utils/candidateDetails.js'
+import LoadingLabel from './LoadingLabel.jsx'
 
 function Value({ children }) {
   return children === null || children === undefined || children === '' ? '-' : children
@@ -14,7 +15,7 @@ function List({ items, empty = 'None' }) {
   return items?.length ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p>{empty}</p>
 }
 
-export default function CandidateDetailsPanel({ candidate, actions = {}, onClose }) {
+export default function CandidateDetailsPanel({ candidate, actions = {}, loadingActions = {}, onClose }) {
   const details = buildCandidateDetails(candidate)
   const analysis = details.analysis
   const [editing, setEditing] = useState(false)
@@ -96,6 +97,16 @@ export default function CandidateDetailsPanel({ candidate, actions = {}, onClose
     }
   }
 
+  async function rerunMatching() {
+    if (loadingActions.matching) return
+    setError('')
+    try {
+      await actions.onRerunMatching?.(candidate)
+    } catch (matchingError) {
+      setError(matchingError.message || 'Unable to re-run candidate matching.')
+    }
+  }
+
   return (
     <div className="candidate-details-backdrop" role="presentation">
       <aside className="candidate-details-panel" role="dialog" aria-modal="true" aria-labelledby="candidate-details-title">
@@ -110,8 +121,9 @@ export default function CandidateDetailsPanel({ candidate, actions = {}, onClose
           </div>
         </header>
 
-        {error && <p className="candidate-update-error" role="alert">{error}</p>}
-        {saveStatus === 'saved' && <p className="candidate-update-success" role="status">Candidate details updated.</p>}
+        <div className="candidate-details-content">
+          {error && <p className="candidate-update-error" role="alert">{error}</p>}
+          {saveStatus === 'saved' && <p className="candidate-update-success" role="status">Candidate details updated.</p>}
 
         <section>
           <h3>Profile</h3>
@@ -203,21 +215,23 @@ export default function CandidateDetailsPanel({ candidate, actions = {}, onClose
             <div><dt>Recruiter notes</dt><dd><Value>{candidate.notes}</Value></dd></div>
           </dl>
         </section>
+        </div>
 
         {editing ? <footer className="candidate-details-actions">
-          <button type="button" disabled={saveStatus === 'saving'} onClick={saveDetails}>{saveStatus === 'saving' ? 'Saving...' : 'Save Changes'}</button>
+          <button type="button" disabled={saveStatus === 'saving'} onClick={saveDetails}>{saveStatus === 'saving' ? <LoadingLabel>Saving...</LoadingLabel> : 'Save Changes'}</button>
           <button type="button" disabled={saveStatus === 'saving'} onClick={cancelEditing}>Cancel</button>
         </footer> : <footer className="candidate-details-actions">
           <button type="button" disabled={!actions.onAddProfileDetails} onClick={() => actions.onAddProfileDetails?.(candidate)}>Add Profile Details</button>
-          <button type="button" disabled={!details.actions.enrich || !actions.onEnrich} onClick={() => actions.onEnrich?.(candidate)}>Enrich</button>
+          <button type="button" disabled={!details.actions.enrich || !actions.onEnrich || loadingActions.enrich} onClick={() => actions.onEnrich?.(candidate)}>{loadingActions.enrich ? <LoadingLabel>Enriching...</LoadingLabel> : 'Enrich'}</button>
           <button type="button" disabled={!actions.onFindEmail} onClick={() => actions.onFindEmail?.(candidate)}>Find Email</button>
           {details.actions.viewLinkedIn ? <a href={candidate.linkedinUrl} target="_blank" rel="noreferrer">View LinkedIn</a> : <button type="button" disabled>View LinkedIn</button>}
-          <button type="button" disabled={!details.actions.save || !actions.onSave} onClick={() => actions.onSave?.(candidate)}>Save Candidate</button>
+          <button type="button" disabled={!details.actions.save || !actions.onSave || loadingActions.save} onClick={() => actions.onSave?.(candidate)}>{loadingActions.save ? <LoadingLabel>Saving...</LoadingLabel> : 'Save Candidate'}</button>
           <button type="button" disabled={!details.actions.email || !actions.onEmail} onClick={() => actions.onEmail?.(candidate)}>Email</button>
           <button type="button" disabled={!details.actions.linkedinMessage || !actions.onLinkedInMessage} onClick={() => actions.onLinkedInMessage?.(candidate)}>LinkedIn Message</button>
           <button type="button" disabled={!details.actions.connect || !actions.onConnect} onClick={() => actions.onConnect?.(candidate)}>Connect</button>
           <button type="button" disabled={!details.actions.inviteInterview || !actions.onInviteInterview} onClick={() => actions.onInviteInterview?.(candidate)}>Invite to Interview</button>
-          <button type="button" disabled={!actions.onRerunMatching} onClick={() => actions.onRerunMatching?.(candidate)}>Re-run Candidate Matching</button>
+          <button type="button" disabled={!actions.onRerunMatching || loadingActions.matching} onClick={rerunMatching}>{loadingActions.matching ? <LoadingLabel>Re-analyzing...</LoadingLabel> : 'Re-run Candidate Matching'}</button>
+          {loadingActions.matching && <span role="status">AI analysis in progress...</span>}
         </footer>}
       </aside>
     </div>

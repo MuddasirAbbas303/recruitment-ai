@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { candidatesApiUrl } from '../config/api.js'
+import LoadingLabel from './LoadingLabel.jsx'
 
 function CandidateEmailDiscoveryModal({
   candidate,
@@ -12,6 +13,7 @@ function CandidateEmailDiscoveryModal({
   const [error, setError] = useState('')
 
   async function findEmail() {
+    if (status === 'searching' || status === 'confirming') return
     setStatus('searching')
     setError('')
     try {
@@ -51,6 +53,7 @@ function CandidateEmailDiscoveryModal({
   }
 
   async function confirmEmail() {
+    if (status === 'confirming' || status === 'searching') return
     setStatus('confirming')
     setError('')
     try {
@@ -100,11 +103,11 @@ function CandidateEmailDiscoveryModal({
         <div className="outreach-actions">
           {!preview ? (
             <button type="button" className="outreach-generate" disabled={status === 'searching'} onClick={findEmail}>
-              {status === 'searching' ? 'Searching...' : 'Find Verified Email'}
+              {status === 'searching' ? <LoadingLabel>Searching...</LoadingLabel> : 'Find Verified Email'}
             </button>
           ) : (
             <button type="button" className="outreach-generate" disabled={status === 'confirming'} onClick={confirmEmail}>
-              {status === 'confirming' ? 'Confirming...' : 'Confirm Email'}
+              {status === 'confirming' ? <LoadingLabel>Confirming...</LoadingLabel> : 'Confirm Email'}
             </button>
           )}
           <button type="button" onClick={onClose}>Cancel</button>

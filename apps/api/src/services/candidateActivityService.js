@@ -4,6 +4,7 @@ import Candidate from '../models/Candidate.js'
 import CandidateActivity, {
   candidateActivityTypes,
 } from '../models/CandidateActivity.js'
+import JobCandidate from '../models/JobCandidate.js'
 import {
   CandidateNotFoundError,
   CandidateValidationError,
@@ -32,6 +33,7 @@ const activityInputSchema = z
     channel: z.string().trim().min(1).max(50).nullable().optional(),
     message: z.string().trim().max(50_000).nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).default({}),
+    projectId: z.string().uuid().optional(),
   })
   .strict()
 const interviewActivityMetadataSchema = z
@@ -146,7 +148,19 @@ export function shouldUpdateCandidateToInterview(status, activityType) {
   return activityType === 'INTERVIEW_INVITED' && status !== 'HIRED'
 }
 
-export async function listCandidateActivities(candidateId) {
+export function getProjectStageForActivity(status, activityType) {
+  if (outreachActivityTypes.has(activityType)) {
+    return ['RESPONDED', 'INTERVIEW', 'HIRED', 'REJECTED'].includes(status)
+      ? status
+      : 'CONTACTED'
+  }
+  if (activityType === 'INTERVIEW_INVITED') {
+    return status === 'HIRED' ? status : 'INTERVIEW'
+  }
+  return status
+}
+
+export async function listCandidateActivities(candidateId, projectId) {
   const validatedId = validateCandidateId(candidateId)
   const candidate = await Candidate.findByPk(validatedId, {
     attributes: ['id'],
@@ -157,7 +171,7 @@ export async function listCandidateActivities(candidateId) {
   }
 
   return CandidateActivity.findAll({
-    where: { candidateId: validatedId },
+    where: { candidateId: validatedId, ...(projectId && { jobId: candidateIdSchema.parse(projectId) }) },
     order: [
       ['createdAt', 'DESC'],
       ['id', 'DESC'],
@@ -176,8 +190,13 @@ export async function createCandidateActivity(
     dependencies.now ?? new Date(),
   )
 
-  return database.transaction(async (transaction) => {
-    const candidate = await Candidate.findByPk(validatedId, {
+  const databaseClient = dependencies.database ?? database
+  const CandidateModel = dependencies.Candidate ?? Candidate
+  const ActivityModel = dependencies.CandidateActivity ?? CandidateActivity
+  const JobCandidateModel = dependencies.JobCandidate ?? JobCandidate
+
+  return databaseClient.transaction(async (transaction) => {
+    const candidate = await CandidateModel.findByPk(validatedId, {
       transaction,
       lock: transaction.LOCK.UPDATE,
     })
@@ -192,9 +211,24 @@ export async function createCandidateActivity(
       )
     }
 
-    const activity = await CandidateActivity.create(
+    const projectId = validatedActivity.projectId
+    delete validatedActivity.projectId
+    let projectCandidate = null
+    if (projectId) {
+      projectCandidate = await JobCandidateModel.findOne({
+        where: { jobId: projectId, candidateId: candidate.id },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      })
+      if (!projectCandidate) {
+        throw new CandidateValidationError('Candidate is not attached to this recruitment project.')
+      }
+    }
+
+    const activity = await ActivityModel.create(
       {
         candidateId: candidate.id,
+        jobId: projectId ?? null,
         ...validatedActivity,
       },
       { transaction },
@@ -208,6 +242,14 @@ export async function createCandidateActivity(
       await candidate.update({ status: 'INTERVIEW' }, { transaction })
     }
 
-    return { activity, candidate }
+
+    if (projectCandidate) {
+      const projectStatus = getProjectStageForActivity(projectCandidate.status, activity.type)
+      if (projectStatus !== projectCandidate.status) {
+        await projectCandidate.update({ status: projectStatus }, { transaction })
+      }
+    }
+
+    return { activity, candidate, projectCandidate }
   })
 }

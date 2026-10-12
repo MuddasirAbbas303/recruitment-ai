@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { candidatesApiUrl } from '../config/api.js'
+import { openGmailCompose } from '../utils/email.js'
+import LoadingLabel from './LoadingLabel.jsx'
 const durationOptions = [30, 45, 60, 90]
 const meetingTypes = ['Video Call', 'Phone', 'On-site']
 
@@ -23,11 +25,7 @@ function getCalendarFilename(contentDisposition) {
   )
 }
 
-function buildMailtoUrl(email, subject, body) {
-  return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
-}
-
-function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated }) {
+function InterviewInvitationModal({ candidate, job, projectId, onClose, onCandidateUpdated, onProjectUpdated }) {
   const [interview, setInterview] = useState({
     title: `Interview - ${candidate.fullName}`,
     date: '',
@@ -44,6 +42,16 @@ function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated 
   const [calendarStatus, setCalendarStatus] = useState('idle')
   const [invitationStatus, setInvitationStatus] = useState('idle')
   const [validationError, setValidationError] = useState(null)
+
+  function openGmail() {
+    const opened = openGmailCompose({ to: candidate.email, subject, body })
+
+    if (!opened) {
+      setValidationError(
+        'Unable to open Gmail. Please allow pop-ups for this site.',
+      )
+    }
+  }
 
   function handleInterviewChange(event) {
     const { name, value } = event.target
@@ -92,6 +100,7 @@ function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated 
   }
 
   async function generateInvitation() {
+    if (generationStatus === 'generating') return
     if (!hasRequiredFields()) {
       return
     }
@@ -124,6 +133,7 @@ function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated 
   }
 
   async function downloadCalendarInvite() {
+    if (calendarStatus === 'downloading') return
     if (!hasRequiredFields()) {
       return
     }
@@ -167,6 +177,7 @@ function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated 
   }
 
   async function markAsInvited() {
+    if (invitationStatus === 'saving') return
     if (!hasRequiredFields()) {
       return
     }
@@ -193,6 +204,7 @@ function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated 
               meetingType: interview.meetingType,
               meetingLocation: interview.meetingLocation.trim() || null,
             },
+            ...(projectId && { projectId }),
           }),
         },
       )
@@ -203,6 +215,7 @@ function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated 
       }
 
       onCandidateUpdated(result.candidate)
+      onProjectUpdated?.(result.projectCandidate)
       setInvitationStatus('success')
     } catch (error) {
       setValidationError(error.message)
@@ -337,7 +350,7 @@ function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated 
           onClick={generateInvitation}
         >
           {generationStatus === 'generating'
-            ? 'Generating...'
+            ? <LoadingLabel>Generating...</LoadingLabel>
             : 'Generate Invitation with AI'}
         </button>
 
@@ -380,16 +393,16 @@ function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated 
         )}
 
         <div className="outreach-actions interview-actions">
-          <a href={buildMailtoUrl(candidate.email, subject, body)}>
-            Open in Email App
-          </a>
+          <button type="button" disabled={!candidate.email} onClick={openGmail}>
+            Open in Gmail
+          </button>
           <button
             type="button"
             disabled={calendarStatus === 'downloading'}
             onClick={downloadCalendarInvite}
           >
             {calendarStatus === 'downloading'
-              ? 'Downloading...'
+              ? <LoadingLabel>Downloading...</LoadingLabel>
               : 'Download Calendar Invite'}
           </button>
           <button
@@ -398,7 +411,7 @@ function InterviewInvitationModal({ candidate, job, onClose, onCandidateUpdated 
             onClick={markAsInvited}
           >
             {invitationStatus === 'saving'
-              ? 'Marking...'
+              ? <LoadingLabel>Marking...</LoadingLabel>
               : 'Mark as Invited'}
           </button>
           <button type="button" onClick={onClose}>

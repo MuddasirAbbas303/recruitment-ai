@@ -3,7 +3,10 @@ import CandidateActivityPanel from './CandidateActivityPanel.jsx'
 import CandidateDetailsPanel from './CandidateDetailsPanel.jsx'
 import CandidateEmailDiscoveryModal from './CandidateEmailDiscoveryModal.jsx'
 import InterviewInvitationModal from './InterviewInvitationModal.jsx'
+import ProjectAssignmentModal from './ProjectAssignmentModal.jsx'
 import { candidatesApiUrl } from '../config/api.js'
+import { openGmailCompose } from '../utils/email.js'
+import LoadingLabel from './LoadingLabel.jsx'
 const candidateStatuses = [
   'SAVED',
   'SHORTLISTED',
@@ -40,7 +43,7 @@ function formatExperience(yearsOfExperience) {
   return `${years} ${years === 1 ? 'year' : 'years'}`
 }
 
-function CandidateDatabase() {
+function CandidateDatabase({ onOpenProject = null }) {
   const [candidates, setCandidates] = useState([])
   const [loadStatus, setLoadStatus] = useState('loading')
   const [filters, setFilters] = useState(emptyFilters)
@@ -53,6 +56,7 @@ function CandidateDatabase() {
   const [interviewCandidate, setInterviewCandidate] = useState(null)
   const [emailDiscoveryCandidate, setEmailDiscoveryCandidate] = useState(null)
   const [detailsCandidateId, setDetailsCandidateId] = useState(null)
+  const [projectCandidate, setProjectCandidate] = useState(null)
   const detailsCandidate = candidates.find(
     (candidate) => candidate.id === detailsCandidateId,
   ) ?? null
@@ -446,6 +450,9 @@ function CandidateDatabase() {
                           </option>
                         ))}
                       </select>
+                      {isUpdating && !isEditingNotes && (
+                        <LoadingLabel>Updating...</LoadingLabel>
+                      )}
                     </td>
                     <td className="notes-cell">
                       {isEditingNotes ? (
@@ -464,7 +471,7 @@ function CandidateDatabase() {
                               onClick={() => saveNotes(candidate.id)}
                               disabled={isUpdating}
                             >
-                              {isUpdating ? 'Saving...' : 'Save'}
+                              {isUpdating ? <LoadingLabel>Saving...</LoadingLabel> : 'Save'}
                             </button>
                             <button
                               type="button"
@@ -495,6 +502,7 @@ function CandidateDatabase() {
                         >
                           View Details
                         </button>
+                        <button type="button" onClick={() => setProjectCandidate(candidate)}>Add to Project</button>
                         {candidate.linkedinUrl ? (
                           <a
                             href={candidate.linkedinUrl}
@@ -509,13 +517,17 @@ function CandidateDatabase() {
                           </button>
                         )}
 
-                        {candidate.email ? (
-                          <a href={`mailto:${candidate.email}`}>Email</a>
-                        ) : (
-                          <button type="button" disabled>
-                            Email
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          disabled={!candidate.email}
+                          onClick={() => {
+                            if (!openGmailCompose({ to: candidate.email })) {
+                              setUpdateError('Unable to open Gmail. Please allow pop-ups for this site.')
+                            }
+                          }}
+                        >
+                          Open in Gmail
+                        </button>
                         <button
                           type="button"
                           onClick={() => setEmailDiscoveryCandidate(candidate)}
@@ -572,6 +584,15 @@ function CandidateDatabase() {
         />
       )}
 
+      {projectCandidate && <ProjectAssignmentModal
+        candidates={[{ ...projectCandidate, isSaved: true }]}
+        onClose={() => setProjectCandidate(null)}
+        onAssigned={(_ids, projects) => {
+          setProjectCandidate(null)
+          if (projects[0]) onOpenProject?.(projects[0])
+        }}
+      />}
+
       {detailsCandidate && (
         <CandidateDetailsPanel
           candidate={{ ...detailsCandidate, isSaved: true }}
@@ -579,7 +600,9 @@ function CandidateDatabase() {
             onSaveDetails: updateCandidateDetails,
             onFindEmail: setEmailDiscoveryCandidate,
             onEmail: (candidate) => {
-              window.location.href = `mailto:${candidate.email}`
+              if (!openGmailCompose({ to: candidate.email })) {
+                setUpdateError('Unable to open Gmail. Please allow pop-ups for this site.')
+              }
             },
             onInviteInterview: setInterviewCandidate,
           }}

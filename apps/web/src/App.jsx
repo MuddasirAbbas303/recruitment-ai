@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import CandidateDatabase from './components/CandidateDatabase.jsx'
 import SearchCandidates from './components/SearchCandidates.jsx'
+import RecruitmentProjects from './components/RecruitmentProjects.jsx'
 import { apiUrl } from './config/api.js'
 
 const initialJobData = {
@@ -57,6 +58,8 @@ function App() {
   const [candidateSourcingTab, setCandidateSourcingTab] = useState(
     'search-candidates',
   )
+  const [originatingProject, setOriginatingProject] = useState(null)
+  const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [apiStatus, setApiStatus] = useState('checking')
   const [jobData, setJobData] = useState(initialJobData)
   const [selectedFiles, setSelectedFiles] = useState([])
@@ -215,6 +218,15 @@ function App() {
           <button
             type="button"
             role="tab"
+            aria-selected={activeTab === 'projects'}
+            className={activeTab === 'projects' ? 'active' : ''}
+            onClick={() => setActiveTab('projects')}
+          >
+            Projects
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeTab === 'candidate-sourcing'}
             aria-controls="candidate-sourcing-panel"
             className={activeTab === 'candidate-sourcing' ? 'active' : ''}
@@ -236,7 +248,14 @@ function App() {
       </header>
 
       <main className="page-content">
-        {activeTab === 'candidate-sourcing' ? (
+        {activeTab === 'projects' ? (
+          <RecruitmentProjects selectedProjectId={selectedProjectId} onSourceCandidates={(project) => {
+            setSelectedProjectId(project.id)
+            setOriginatingProject(project)
+            setCandidateSourcingTab('search-candidates')
+            setActiveTab('candidate-sourcing')
+          }} />
+        ) : activeTab === 'candidate-sourcing' ? (
           <section
             id="candidate-sourcing-panel"
             role="tabpanel"
@@ -279,11 +298,21 @@ function App() {
 
             {candidateSourcingTab === 'search-candidates' ? (
               <div id="search-candidates-panel" role="tabpanel">
-                <SearchCandidates />
+                <SearchCandidates
+                  originatingProject={originatingProject}
+                  onBackToProject={originatingProject ? () => setActiveTab('projects') : null}
+                  onOpenProject={(project) => {
+                    setSelectedProjectId(project.id)
+                    setActiveTab('projects')
+                  }}
+                />
               </div>
             ) : (
               <div id="candidate-database-panel" role="tabpanel">
-                <CandidateDatabase />
+                <CandidateDatabase onOpenProject={(project) => {
+                  setSelectedProjectId(project.id)
+                  setActiveTab('projects')
+                }} />
               </div>
             )}
           </section>
